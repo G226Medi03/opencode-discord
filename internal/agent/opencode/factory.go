@@ -5,8 +5,8 @@ import (
 	"os"
 	"strings"
 
-	"oc-discord/internal/acp"
 	"oc-discord/internal/agent"
+	"oc-discord/internal/agent/acp"
 	"oc-discord/internal/config"
 	"oc-discord/internal/launcher"
 	"oc-discord/internal/logx"

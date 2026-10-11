@@ -11,8 +11,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"oc-discord/internal/acp"
 	"oc-discord/internal/agent"
+	"oc-discord/internal/agent/acp"
 	"oc-discord/internal/launcher"
 	"oc-discord/internal/logx"
 	"oc-discord/internal/perms"

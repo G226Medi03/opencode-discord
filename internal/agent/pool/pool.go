@@ -1,6 +1,6 @@
-// Package agentpool keeps one agent process per key (usually a project cwd) and
+// Package pool keeps one agent process per key (usually a project cwd) and
 // reaps idle processes. It is agent-implementation agnostic.
-package agentpool
+package pool
 
 import (
 	"context"

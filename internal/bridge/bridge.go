@@ -27,7 +27,7 @@ const thinking = "⏳ 작업 중…"
 type Bridge struct {
 	config         *config.Config
 	logger         *logx.Logger
-	discord_client *discord.DiscordClient
+	discord_client discord.ChatApp
 	agent_pool     agent.Pool
 	store          *store.Store
 	bind           *bindings.Manager
@@ -49,7 +49,7 @@ type sessionState struct {
 }
 
 // New builds a Bridge.
-func New(cfg *config.Config, log *logx.Logger, t *discord.DiscordClient, pool agent.Pool) *Bridge {
+func New(cfg *config.Config, log *logx.Logger, t discord.ChatApp, pool agent.Pool) *Bridge {
 	st := store.Load(cfg.StatePath)
 	b := &Bridge{
 		config:         cfg,

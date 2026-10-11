@@ -9,12 +9,12 @@ import (
 	"os/signal"
 	"syscall"
 
-	"oc-discord/internal/agentpool"
+	"oc-discord/internal/agent/opencode"
+	"oc-discord/internal/agent/pool"
 	"oc-discord/internal/bridge"
 	"oc-discord/internal/config"
 	"oc-discord/internal/discord"
 	"oc-discord/internal/logx"
-	"oc-discord/internal/opencode"
 )
 
 const version = "0.1.0"
@@ -60,13 +60,13 @@ func main() {
 		GuildID: cfg.GuildID,
 		Logger:  log,
 	})
-	pool := agentpool.New(agentpool.Options{
+	agentPool := pool.New(pool.Options{
 		Factory:         opencode.Factory(cfg, log),
 		IdleShutdownMin: cfg.Bot.IdleShutdownMin,
 		MaxAgents:       cfg.Bot.MaxAgents,
 		Logger:          log,
 	})
-	bot := bridge.New(cfg, log, transport, pool)
+	bot := bridge.New(cfg, log, transport, agentPool)
 
 	if *deploy {
 		if err := bot.Deploy(); err != nil {

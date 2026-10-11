@@ -1,6 +1,6 @@
 // Package agent defines a coding-agent abstraction that a chat bridge can drive
 // without knowing which agent is behind it. The ACP implementation lives in
-// internal/acp; OpenCode is wired through internal/opencode.
+// internal/agent/acp; OpenCode is wired through internal/agent/opencode.
 package agent
 
 import (
