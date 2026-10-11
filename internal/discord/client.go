@@ -10,6 +10,7 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 
+	"oc-discord/internal/chunk"
 	"oc-discord/internal/logx"
 )
 
@@ -92,10 +93,7 @@ func (self *DiscordClient) Channel(id string) (Channel, error) {
 }
 
 func truncate(s string) string {
-	if len(s) > 2000 {
-		return s[:2000]
-	}
-	return s
+	return chunk.Head(s, 2000)
 }
 
 // Send_Msg posts a message.
@@ -353,9 +351,7 @@ func (self *DiscordClient) handleSlash(i *discordgo.InteractionCreate) {
 	}
 	responded := false
 	reply := func(content string) {
-		if len(content) > 1990 {
-			content = content[:1990]
-		}
+		content = chunk.Head(content, 1990)
 		if !responded {
 			responded = true
 			_ = self.discord_go.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{

@@ -227,12 +227,12 @@ func (b *Bridge) runTurn(m discord.Message, ref bindings.ChannelRef, key string,
 		if ph, err := b.discord_client.Send_Msg(ref.ID, thinking); err == nil {
 			st.attach(ph)
 		} else {
-			b.logger.Debugf("[turn] placeholder 전송 실패: %v", err)
+			b.logger.Warnf("[turn] placeholder 전송 실패: %v", err)
 		}
 	} else if ph, err := b.discord_client.Reply_msg(ref.ID, m.ID, thinking); err == nil {
 		st.attach(ph)
 	} else {
-		b.logger.Debugf("[turn] placeholder 전송 실패: %v", err)
+		b.logger.Warnf("[turn] placeholder 전송 실패: %v", err)
 	}
 
 	sink := &turnSink{b: b, stream: st, key: key}
@@ -432,7 +432,7 @@ func chanName(ref bindings.ChannelRef) string {
 
 func (b *Bridge) sendChannel(channelID, content string) {
 	if _, err := b.discord_client.Send_Msg(channelID, content); err != nil {
-		b.logger.Debugf("[send] 실패: %v", err)
+		b.logger.Warnf("[send] 실패 channel=%s len=%d: %v", channelID, len(content), err)
 	}
 }
 

@@ -12,6 +12,9 @@ import (
 // answerFooter is appended to the end of every conversational answer.
 const answerFooter = "\n[답변종료]"
 
+// discordMaxChars is Discord's per-message limit, counted in characters.
+const discordMaxChars = 2000
+
 // stream renders streamed assistant text into a single edited chat message.
 type stream struct {
 	b         *Bridge
@@ -93,8 +96,8 @@ func (s *stream) headLocked() string {
 		lines = lines[len(lines)-6:]
 	}
 	h := strings.Join(lines, "\n") + "\n\n"
-	if len(h) > 600 {
-		h = "… " + h[len(h)-596:]
+	if chunk.Len(h) > 600 {
+		h = "… " + chunk.Tail(h, 596)
 	}
 	return h
 }
@@ -102,7 +105,7 @@ func (s *stream) headLocked() string {
 func (s *stream) contentLocked() string {
 	header := s.headerLocked()
 	head := s.headLocked()
-	room := maxInt(400, s.b.config.Bot.MaxChunk-len(header)-len(head)-len(answerFooter))
+	room := maxInt(400, s.b.config.Bot.MaxChunk-chunk.Len(header)-chunk.Len(head)-chunk.Len(answerFooter))
 	if strings.TrimSpace(s.text.String()) == "" {
 		return header + head + thinking
 	}
@@ -134,8 +137,9 @@ func (s *stream) scheduleLocked() {
 }
 
 func (s *stream) edit(content string) {
-	if len(content) > 2000 {
-		content = content[:2000]
+	if n := chunk.Len(content); n > discordMaxChars {
+		s.b.logger.Warnf("[stream] 편집 내용이 %d자로 제한(%d자)을 넘어 잘립니다 channel=%s", n, discordMaxChars, s.channelID)
+		content = chunk.Head(content, discordMaxChars)
 	}
 	s.mu.Lock()
 	if s.messageID == "" {
@@ -148,7 +152,7 @@ func (s *stream) edit(content string) {
 	s.mu.Unlock()
 
 	if err := s.b.discord_client.Edit(ref, content); err != nil {
-		s.b.logger.Debugf("[stream] edit 실패: %v", err)
+		s.b.logger.Warnf("[stream] edit 실패 channel=%s msg=%s len=%d: %v", ref.ChannelID, ref.MessageID, len(content), err)
 	}
 }
 
@@ -166,6 +170,11 @@ func (s *stream) finish() {
 	s.mu.Unlock()
 
 	pieces := assembleAnswer(header, head, body, answerFooter, s.b.config.Bot.MaxChunk)
+	maxPiece := 0
+	for _, p := range pieces {
+		maxPiece = maxInt(maxPiece, chunk.Len(p))
+	}
+	s.b.logger.Infof("[stream] finish channel=%s pieces=%d maxPieceChars=%d hasMsg=%v bodyChars=%d", s.channelID, len(pieces), maxPiece, hasMsg, chunk.Len(body))
 
 	if hasMsg {
 		s.edit(pieces[0])
@@ -202,7 +211,7 @@ func (s *stream) fail(msg string) {
 // assembleAnswer splits body into sized pieces, putting header+head on the
 // first piece and footer on the last. Pure so it can be unit-tested.
 func assembleAnswer(header, head, body, footer string, limit int) []string {
-	room := limit - len(header) - len(head) - len(footer)
+	room := limit - chunk.Len(header) - chunk.Len(head) - chunk.Len(footer)
 	if room < 50 {
 		room = 50
 	}

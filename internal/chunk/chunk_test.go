@@ -3,7 +3,62 @@ package chunk
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
+
+func TestSplitKoreanNoLossNoBrokenRune(t *testing.T) {
+	src := strings.Repeat("가나다 라마바사 ", 1000) // ~7000 chars, 3 bytes each
+	got := Split(src, 1900)
+	if len(got) < 4 {
+		t.Fatalf("expected several chunks, got %d", len(got))
+	}
+	total := 0
+	for i, c := range got {
+		if !utf8.ValidString(c) {
+			t.Fatalf("chunk %d is invalid UTF-8", i)
+		}
+		if Len(c) > 1900 {
+			t.Fatalf("chunk %d over limit: %d chars", i, Len(c))
+		}
+		total += strings.Count(c, "가") + strings.Count(c, "나") + strings.Count(c, "다")
+	}
+	if total != 3000 {
+		t.Fatalf("content lost: got %d of 3000 syllables", total)
+	}
+}
+
+func TestSplitKoreanLongRunNoSpaces(t *testing.T) {
+	got := Split(strings.Repeat("가", 5000), 1900)
+	joined := ""
+	for i, c := range got {
+		if !utf8.ValidString(c) || Len(c) > 1900 {
+			t.Fatalf("chunk %d invalid or over limit (%d chars)", i, Len(c))
+		}
+		joined += c
+	}
+	if Len(joined) != 5000 {
+		t.Fatalf("expected 5000 chars, got %d", Len(joined))
+	}
+}
+
+func TestHeadTailCharBoundary(t *testing.T) {
+	if got := Head("가나다라", 2); got != "가나" {
+		t.Fatalf("Head: %q", got)
+	}
+	if got := Tail("가나다라", 2); got != "다라" {
+		t.Fatalf("Tail: %q", got)
+	}
+	if got := Head("abc", 10); got != "abc" {
+		t.Fatalf("Head short: %q", got)
+	}
+}
+
+func TestLivePreviewKorean(t *testing.T) {
+	got := LivePreview(strings.Repeat("가", 3000), 1900)
+	if !utf8.ValidString(got) || Len(got) > 1900 {
+		t.Fatalf("invalid or over limit: %d chars", Len(got))
+	}
+}
 
 func TestSplitShort(t *testing.T) {
 	got := Split("hello world", 1900)

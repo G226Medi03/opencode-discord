@@ -4,7 +4,46 @@ package chunk
 
 import (
 	"strings"
+	"unicode/utf8"
 )
+
+// Len returns the length of s in characters (Discord's limit unit).
+func Len(s string) int {
+	return utf8.RuneCountInString(s)
+}
+
+// Head returns the longest prefix of s with at most n characters, cut on a character boundary.
+func Head(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	count := 0
+	for i := range s {
+		if count == n {
+			return s[:i]
+		}
+		count++
+	}
+	return s
+}
+
+// Tail returns the longest suffix of s with at most n characters, cut on a character boundary.
+func Tail(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	skip := Len(s) - n
+	if skip <= 0 {
+		return s
+	}
+	for i := range s {
+		if skip == 0 {
+			return s[i:]
+		}
+		skip--
+	}
+	return ""
+}
 
 var fenceRE = func(line string) (bool, string) {
 	t := strings.TrimSpace(line)
@@ -31,7 +70,7 @@ func Split(text string, limit int) []string {
 		limit = 1900
 	}
 	src := strings.ReplaceAll(text, "\r\n", "\n")
-	if len(src) <= limit {
+	if Len(src) <= limit {
 		if strings.TrimSpace(src) == "" {
 			return nil
 		}
@@ -65,11 +104,11 @@ func Split(text string, limit int) []string {
 	for _, line := range strings.Split(src, "\n") {
 		isFence, lang := fenceRE(line)
 
-		if len(line)+1+len(fenceClose()) > limit {
+		if Len(line)+1+Len(fenceClose()) > limit {
 			rest := line
-			for len(rest) > 0 {
-				room := limit - len(buf) - len(fenceClose())
-				if len(rest) <= room {
+			for rest != "" {
+				room := limit - Len(buf) - Len(fenceClose())
+				if Len(rest) <= room {
 					buf += rest
 					break
 				}
@@ -77,9 +116,10 @@ func Split(text string, limit int) []string {
 					flush()
 					continue
 				}
-				cut := strings.LastIndex(rest[:room], " ")
+				head := Head(rest, room)
+				cut := strings.LastIndex(head, " ")
 				if cut <= 0 {
-					cut = room
+					cut = len(head)
 				}
 				buf += rest[:cut]
 				out = append(out, strings.TrimRight(buf+fenceClose(), " \t\n"))
@@ -88,7 +128,7 @@ func Split(text string, limit int) []string {
 			}
 			buf += "\n"
 		} else {
-			if len(buf)+len(line)+1+len(fenceClose()) > limit {
+			if Len(buf)+Len(line)+1+Len(fenceClose()) > limit {
 				flush()
 			}
 			buf += line + "\n"
@@ -120,10 +160,10 @@ func LivePreview(text string, limit int) string {
 	if limit <= 0 {
 		limit = 1900
 	}
-	if len(text) <= limit-2 {
+	if Len(text) <= limit-2 {
 		return text + " ▌"
 	}
-	return "… " + text[len(text)-(limit-4):] + " ▌"
+	return "… " + Tail(text, limit-4) + " ▌"
 }
 
 var statusIcon = map[string]string{
@@ -138,9 +178,7 @@ func ToolLine(title, status string) string {
 		icon = "🛠️"
 	}
 	title = strings.Join(strings.Fields(title), " ")
-	if len(title) > 160 {
-		title = title[:160]
-	}
+	title = Head(title, 160)
 	suffix := ""
 	if status != "" && status != "pending" && status != "in_progress" {
 		suffix = "  (" + status + ")"

@@ -5,6 +5,7 @@ import (
 
 	"oc-discord/internal/agent"
 	"oc-discord/internal/bindings"
+	"oc-discord/internal/chunk"
 	"oc-discord/internal/discord"
 	"oc-discord/internal/perms"
 )
@@ -72,9 +73,7 @@ func (b *Bridge) askViaButtons(channelID string, info perms.Summary, canAlways b
 	if info.Detail != "" {
 		body = head + "\n```\n" + info.Detail + "\n```"
 	}
-	if len(body) > 1990 {
-		body = body[:1990]
-	}
+	body = chunk.Head(body, 1990)
 	btns := []discord.Button{
 		{ID: "allow", Label: "허용", Style: discord.StyleSuccess},
 		{ID: "always", Label: "항상 허용", Style: discord.StylePrimary, Disabled: !canAlways},
