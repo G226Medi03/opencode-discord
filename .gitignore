@@ -1,0 +1,18 @@
+# ---- 시크릿 (절대 커밋 금지) ----
+.env
+.env.local
+*.env.local
+
+# ---- 로컬 산출물 ----
+logs/
+node_modules/
+*.log
+
+# 런타임 상태 + 빌드 산출물
+state/
+*.exe
+/oc-discord
+
+# ---- OS ----
+Thumbs.db
+desktop.ini

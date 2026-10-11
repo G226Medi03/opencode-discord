@@ -1,0 +1,29 @@
+﻿{
+  "_readme": "oc-discord 가 '대화'할 범위 정책. categories(카테고리 이름) 안의 텍스트 채널 전부 + channels(채널 이름) 이 허용 대상. 이름 -\u003e ID 해석은 과거 스크립트가 채웠으나 지금은 없다 — 채널 추가/이름변경 시 resolved.* 를 직접 수정해야 하며, oc-discord(internal/config)가 resolved.channelIds 를 읽는다.",
+  "guildId": "720921362033672252",
+  "guildName": "s_P",
+  "categories": [
+    "coding_bots"
+  ],
+  "channels": [
+    "ccst"
+  ],
+  "respondWithoutMention": true,
+  "resolved": {
+    "categoryIds": {
+      "coding_bots": "1556526081689911337"
+    },
+    "channelIds": [
+      "1556526110794317897"
+    ],
+    "entries": [
+      {
+        "id": "1556526110794317897",
+        "name": "ccst",
+        "type": 0,
+        "category": "coding_bots",
+        "source": "category"
+      }
+    ]
+  }
+}

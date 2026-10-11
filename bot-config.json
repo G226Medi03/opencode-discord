@@ -1,0 +1,22 @@
+{
+  "permissions": "ask",
+  "permissionTimeoutSec": 180,
+  "rememberAllowAlways": true,
+  "allowPatterns": [],
+  "denyPatterns": [
+    "rm\\s+-rf\\s+/",
+    "format\\s+[a-zA-Z]:",
+    "shutdown\\s+/s",
+    "Remove-Item\\s+-Recurse\\s+-Force\\s+[A-Za-z]:\\\\?$"
+  ],
+  "threads": false,
+  "stream": true,
+  "streamEditMs": 1300,
+  "maxChunk": 1900,
+  "showTools": true,
+  "idleShutdownMin": 30,
+  "maxAgents": 8,
+  "opencodeArgs": [],
+  "requireMention": null,
+  "cmdTimeoutSec": 60
+}
