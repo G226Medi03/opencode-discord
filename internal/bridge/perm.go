@@ -3,10 +3,10 @@ package bridge
 import (
 	"time"
 
+	"github.com/G226Medi03/chat-app-adapter/chat"
+	"github.com/G226Medi03/chat-app-adapter/chunk"
 	"oc-discord/internal/agent"
 	"oc-discord/internal/bindings"
-	"oc-discord/internal/chunk"
-	"oc-discord/internal/discord"
 	"oc-discord/internal/perms"
 )
 
@@ -74,23 +74,23 @@ func (b *Bridge) askViaButtons(channelID string, info perms.Summary, canAlways b
 		body = head + "\n```\n" + info.Detail + "\n```"
 	}
 	body = chunk.Head(body, 1990)
-	btns := []discord.Button{
-		{ID: "allow", Label: "허용", Style: discord.StyleSuccess},
-		{ID: "always", Label: "항상 허용", Style: discord.StylePrimary, Disabled: !canAlways},
-		{ID: "deny", Label: "거부", Style: discord.StyleDanger},
+	btns := []chat.Button{
+		{ID: "allow", Label: "허용", Style: chat.StyleSuccess},
+		{ID: "always", Label: "항상 허용", Style: chat.StylePrimary, Disabled: !canAlways},
+		{ID: "deny", Label: "거부", Style: chat.StyleDanger},
 	}
-	ref, err := b.discord_client.Send_Buttons(channelID, body, btns)
+	ref, err := b.app.SendButtons(channelID, body, btns)
 	if err != nil {
 		b.logger.Warnf("[perm] 승인 질문 전송 실패: %v", err)
 		return "deny"
 	}
 	timeout := time.Duration(maxInt(10, b.config.Bot.PermissionTimeoutSec)) * time.Second
-	choice, err := b.discord_client.AwaitChoice(ref, timeout, b.isOwner)
+	choice, err := b.app.AwaitChoice(ref, timeout, b.isOwner)
 	if err != nil {
-		_ = b.discord_client.ClearButtons(ref, head+" → 시간 초과(거부) ⏱️")
+		_ = b.app.ClearButtons(ref, head+" → 시간 초과(거부) ⏱️")
 		return "deny"
 	}
 	label := map[string]string{"allow": "허용 ✅", "always": "항상 허용 ☑️", "deny": "거부 ❌"}[choice.ButtonID]
-	_ = b.discord_client.ClearButtons(ref, head+" → "+label)
+	_ = b.app.ClearButtons(ref, head+" → "+label)
 	return choice.ButtonID
 }

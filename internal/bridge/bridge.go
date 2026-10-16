@@ -1,4 +1,4 @@
-// Package bridge connects a discord.Transport to an agent.Pool and implements the
+// Package bridge connects a chat.App to an agent.Pool and implements the
 // OpenCode connector: bindings (channel/thread -> cwd/session), turn execution,
 // streaming, permissions, and the command set.
 package bridge
@@ -11,11 +11,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/G226Medi03/chat-app-adapter/chat"
+	"github.com/G226Medi03/chat-app-adapter/chatcmd"
 	"oc-discord/internal/agent"
 	"oc-discord/internal/bindings"
-	"oc-discord/internal/chatcmd"
 	"oc-discord/internal/config"
-	"oc-discord/internal/discord"
 	"oc-discord/internal/logx"
 	"oc-discord/internal/projects"
 	"oc-discord/internal/store"
@@ -25,12 +25,12 @@ const thinking = "⏳ 작업 중…"
 
 // Bridge is the OpenCode <-> Discord connector.
 type Bridge struct {
-	config         *config.Config
-	logger         *logx.Logger
-	discord_client discord.ChatApp
-	agent_pool     agent.Pool
-	store          *store.Store
-	bind           *bindings.Manager
+	config     *config.Config
+	logger     *logx.Logger
+	app        chat.App
+	agent_pool agent.Pool
+	store      *store.Store
+	bind       *bindings.Manager
 
 	registry *chatcmd.Registry
 
@@ -49,18 +49,18 @@ type sessionState struct {
 }
 
 // New builds a Bridge.
-func New(cfg *config.Config, log *logx.Logger, t discord.ChatApp, pool agent.Pool) *Bridge {
+func New(cfg *config.Config, log *logx.Logger, t chat.App, pool agent.Pool) *Bridge {
 	st := store.Load(cfg.StatePath)
 	b := &Bridge{
-		config:         cfg,
-		logger:         log,
-		discord_client: t,
-		agent_pool:     pool,
-		store:          st,
-		bind:           bindings.New(cfg, st, log),
-		queues:         map[string]*chain{},
-		sessions:       map[string]*sessionState{},
-		autoAllow:      map[string]bool{},
+		config:     cfg,
+		logger:     log,
+		app:        t,
+		agent_pool: pool,
+		store:      st,
+		bind:       bindings.New(cfg, st, log),
+		queues:     map[string]*chain{},
+		sessions:   map[string]*sessionState{},
+		autoAllow:  map[string]bool{},
 	}
 	b.registry = b.buildRegistry()
 	return b
@@ -71,20 +71,20 @@ func (b *Bridge) Store() *store.Store { return b.store }
 
 // Deploy registers the slash commands on the transport.
 func (b *Bridge) Deploy() error {
-	return b.discord_client.RegisterCommands(b.registry.Specs())
+	return b.app.RegisterCommands(b.registry.Specs())
 }
 
 // Run wires handlers, optionally deploys, and runs the transport until ctx ends.
 func (b *Bridge) Run(ctx context.Context) error {
-	b.discord_client.Set_OnMessage(b.handleMessage)
-	b.discord_client.Set_OnCommand(b.handleCommand)
+	b.app.OnMessage(b.handleMessage)
+	b.app.OnCommand(b.handleCommand)
 	if b.config.DeployCommands {
 		if err := b.Deploy(); err != nil {
 			b.logger.Warnf("[deploy] 실패: %v", err)
 		}
 	}
-	err := b.discord_client.Run(ctx)
-	_ = b.discord_client.Close()
+	err := b.app.Run(ctx)
+	_ = b.app.Close()
 	_ = b.store.SaveNow()
 	b.agent_pool.Shutdown()
 	return err
@@ -92,7 +92,7 @@ func (b *Bridge) Run(ctx context.Context) error {
 
 // ---- inbound -------------------------------------------------------------
 
-func (b *Bridge) handleMessage(m discord.Message) {
+func (b *Bridge) handleMessage(m chat.Message) {
 	defer func() {
 		if r := recover(); r != nil {
 			b.logger.Errorf("[msg] panic: %v", r)
@@ -139,7 +139,7 @@ func (b *Bridge) handleMessage(m discord.Message) {
 	b.enqueue(key, func() { b.runTurn(m, ref, key, *bindingPtr, text) })
 }
 
-func (b *Bridge) handleCommand(in discord.Input) {
+func (b *Bridge) handleCommand(in chat.Input) {
 	defer func() {
 		if r := recover(); r != nil {
 			b.logger.Errorf("[cmd] panic: %v", r)
@@ -176,7 +176,7 @@ func (b *Bridge) dispatch(in *chatcmd.Invocation) {
 
 // ---- turn execution ------------------------------------------------------
 
-func (b *Bridge) runTurn(m discord.Message, ref bindings.ChannelRef, key string, binding store.Binding, text string) {
+func (b *Bridge) runTurn(m chat.Message, ref bindings.ChannelRef, key string, binding store.Binding, text string) {
 	ctx := context.Background()
 	cwd := binding.Cwd
 	if !projects.IsDir(cwd) {
@@ -190,10 +190,9 @@ func (b *Bridge) runTurn(m discord.Message, ref bindings.ChannelRef, key string,
 		b.sendChannel(ref.ID, fmt.Sprintf("opencode acp 기동 실패: `%v`", err))
 		return
 	}
-	defer b.agent_pool.Release(agKey)
-
 	sess, err := b.ensureSession(ctx, ref, key, ag, agKey, binding)
 	if err != nil {
+		b.agent_pool.Release(agKey)
 		b.logger.Errorf("[turn] 세션 생성 실패: %v", err)
 		b.sendChannel(ref.ID, fmt.Sprintf("세션 생성 실패: `%v`", err))
 		return
@@ -201,7 +200,7 @@ func (b *Bridge) runTurn(m discord.Message, ref bindings.ChannelRef, key string,
 
 	// Optional: answer inside a new thread that shares the parent session.
 	if b.config.Bot.Threads && !ref.IsDM && !ref.IsThread {
-		if th, terr := b.discord_client.StartThread(ref.ID, m.ID, threadName(m)); terr == nil {
+		if th, terr := b.app.StartThread(ref.ID, m.ID, threadName(m)); terr == nil {
 			tref := bindings.ChannelRef{
 				ID: th.ID, Name: th.Name, ParentID: ref.ID, ParentName: ref.Name,
 				GuildID: th.GuildID, IsThread: true,
@@ -224,12 +223,12 @@ func (b *Bridge) runTurn(m discord.Message, ref bindings.ChannelRef, key string,
 
 	st := newStream(b, ref.ID, sess.mode)
 	if ref.IsThread {
-		if ph, err := b.discord_client.Send_Msg(ref.ID, thinking); err == nil {
+		if ph, err := b.app.Send(ref.ID, thinking); err == nil {
 			st.attach(ph)
 		} else {
 			b.logger.Warnf("[turn] placeholder 전송 실패: %v", err)
 		}
-	} else if ph, err := b.discord_client.Reply_msg(ref.ID, m.ID, thinking); err == nil {
+	} else if ph, err := b.app.Reply(ref.ID, m.ID, thinking); err == nil {
 		st.attach(ph)
 	} else {
 		b.logger.Warnf("[turn] placeholder 전송 실패: %v", err)
@@ -241,6 +240,23 @@ func (b *Bridge) runTurn(m discord.Message, ref bindings.ChannelRef, key string,
 	}
 
 	stop, err := ag.Prompt(ctx, sess.sessionID, b.buildPrompt(m, ref, text, sess.mode), sink, perm)
+	b.agent_pool.Release(agKey)
+	if err != nil && !ag.Running() && st.length() == 0 && !sink.toolSeen {
+		b.logger.Warnf("[turn] 프로세스 종료로 실패 — 세션 %s 로 재기동 후 재시도 key=%s: %v", sess.sessionID, key, err)
+		var ag2 agent.Agent
+		ag2, agKey, err = b.agent_pool.Acquire(ctx, cwd)
+		if err == nil {
+			ag = ag2
+			sess, err = b.ensureSession(ctx, ref, key, ag, agKey, binding)
+			if err != nil {
+				b.agent_pool.Release(agKey)
+			}
+		}
+		if err == nil {
+			stop, err = ag.Prompt(ctx, sess.sessionID, b.buildPrompt(m, ref, text, sess.mode), sink, perm)
+			b.agent_pool.Release(agKey)
+		}
+	}
 	if err != nil {
 		dead := !ag.Running()
 		st.fail(fmt.Sprintf("%v", err) + deadSuffix(dead))
@@ -269,7 +285,7 @@ func (b *Bridge) ensureSession(ctx context.Context, ref bindings.ChannelRef, key
 			configOptions = meta.Config
 			b.logger.Infof("[session] resume sessionId=%s cwd=%s key=%s", sessionID, binding.Cwd, key)
 		} else {
-			b.logger.Warnf("[session] resume 실패(%v) — 새 세션 생성", err)
+			b.logger.Warnf("[session] resume 실패 sessionId=%s cwd=%s pid=%d running=%v: %v — 새 세션 생성", binding.SessionID, binding.Cwd, ag.PID(), ag.Running(), err)
 		}
 	}
 	if sessionID == "" {
@@ -282,14 +298,14 @@ func (b *Bridge) ensureSession(ctx context.Context, ref bindings.ChannelRef, key
 		b.logger.Infof("[session] 신규 sessionId=%s cwd=%s key=%s", sessionID, binding.Cwd, key)
 	}
 
-	if binding.Model != "" {
-		if _, err := ag.SetConfig(ctx, sessionID, "model", binding.Model); err != nil {
-			b.logger.Warnf("[session] 모델 적용 실패: %v", err)
+	if model := b.modelFor(binding); model != "" {
+		if _, err := ag.SetConfig(ctx, sessionID, "model", model); err != nil {
+			b.logger.Warnf("[session] 모델 적용 실패 model=%s: %v", model, err)
 		}
 	}
 	if binding.Agent != "" {
 		if err := ag.SetMode(ctx, sessionID, binding.Agent); err != nil {
-			b.logger.Warnf("[session] 에이전트 적용 실패: %v", err)
+			b.logger.Warnf("[session] 에이전트 적용 실패 mode=%s sessionId=%s pid=%d running=%v: %v", binding.Agent, sessionID, ag.PID(), ag.Running(), err)
 		}
 	}
 
@@ -307,6 +323,29 @@ func (b *Bridge) ensureSession(ctx context.Context, ref bindings.ChannelRef, key
 }
 
 // ---- helpers -------------------------------------------------------------
+
+// describeAgentErr turns an ACP error into a message the Discord user can act on.
+func describeAgentErr(err error) string {
+	if strings.Contains(err.Error(), "closed by client") {
+		return "OpenCode 프로세스가 종료되어 연결이 끊겼습니다. 다음 메시지를 보내면 자동으로 다시 시작합니다."
+	}
+	return err.Error()
+}
+
+// forcedModel returns the globally forced model (bot-config.json "model" /
+// OCD_MODEL), or "" when no force is configured.
+func (b *Bridge) forcedModel() string {
+	return strings.TrimSpace(b.config.Bot.Model)
+}
+
+// modelFor resolves the model to apply for a binding. A configured forced model
+// always wins over the per-binding value.
+func (b *Bridge) modelFor(binding store.Binding) string {
+	if m := b.forcedModel(); m != "" {
+		return m
+	}
+	return binding.Model
+}
 
 func modeFromOptions(opts []agent.ConfigOption) string {
 	for _, co := range opts {
@@ -354,7 +393,7 @@ func (b *Bridge) isOwner(userID string) bool {
 
 func (b *Bridge) extractText(content string) string {
 	text := content
-	if id := b.discord_client.Get_BotId(); id != "" {
+	if id := b.app.BotID(); id != "" {
 		re := regexp.MustCompile(`<@!?` + regexp.QuoteMeta(id) + `>`)
 		text = re.ReplaceAllString(text, " ")
 	}
@@ -367,7 +406,7 @@ func (b *Bridge) extractText(content string) string {
 
 func (b *Bridge) channelRef(channelID string) bindings.ChannelRef {
 	ref := bindings.ChannelRef{ID: channelID}
-	ch, err := b.discord_client.Channel(channelID)
+	ch, err := b.app.Channel(channelID)
 	if err != nil {
 		return ref
 	}
@@ -378,7 +417,7 @@ func (b *Bridge) channelRef(channelID string) bindings.ChannelRef {
 	ref.IsDM = ch.IsDM
 	ref.IsThread = ch.IsThread
 	if ref.IsThread && ref.ParentID != "" {
-		if p, err := b.discord_client.Channel(ref.ParentID); err == nil {
+		if p, err := b.app.Channel(ref.ParentID); err == nil {
 			ref.ParentCategoryID = p.ParentID
 			if ref.ParentName == "" {
 				ref.ParentName = p.Name
@@ -397,24 +436,15 @@ func (b *Bridge) unresolvedNotice(ref bindings.ChannelRef) string {
 	}, "\n")
 }
 
-func (b *Bridge) buildPrompt(m discord.Message, ref bindings.ChannelRef, text, mode string) string {
+func (b *Bridge) buildPrompt(m chat.Message, ref bindings.ChannelRef, text, mode string) string {
 	if mode == "" {
 		mode = "build"
 	}
-	guild := "(DM)"
-	if ref.GuildID != "" {
-		guild = ref.GuildID
-	}
 	return strings.Join([]string{
 		"<discord_message_context>",
-		"authorId: " + m.AuthorID,
 		"authorLabel: " + m.AuthorName,
-		fmt.Sprintf("channel: #%s (%s)", chanName(ref), ref.ID),
-		"guild: " + guild,
-		fmt.Sprintf("isDirectMention: %v", m.MentionedBot),
+		"channel: #" + chanName(ref),
 		fmt.Sprintf("isOwner: %v", b.isOwner(m.AuthorID)),
-		"messageId: " + m.ID,
-		"timestamp: " + m.Timestamp.UTC().Format(time.RFC3339),
 		"</discord_message_context>",
 		"",
 		`<user_input mode="` + mode + `">`,
@@ -431,7 +461,7 @@ func chanName(ref bindings.ChannelRef) string {
 }
 
 func (b *Bridge) sendChannel(channelID, content string) {
-	if _, err := b.discord_client.Send_Msg(channelID, content); err != nil {
+	if _, err := b.app.Send(channelID, content); err != nil {
 		b.logger.Warnf("[send] 실패 channel=%s len=%d: %v", channelID, len(content), err)
 	}
 }
@@ -443,7 +473,7 @@ func deadSuffix(dead bool) string {
 	return ""
 }
 
-func threadName(m discord.Message) string {
+func threadName(m chat.Message) string {
 	n := strings.TrimSpace(m.AuthorName)
 	if n == "" {
 		n = "task"

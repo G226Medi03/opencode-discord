@@ -3,19 +3,21 @@ package bridge
 import (
 	"strings"
 
-	"oc-discord/internal/chunk"
+	"github.com/G226Medi03/chat-app-adapter/chunk"
 )
 
 // turnSink adapts agent streaming updates to a chat message stream.
 type turnSink struct {
-	b      *Bridge
-	stream *stream
-	key    string
+	b        *Bridge
+	stream   *stream
+	key      string
+	toolSeen bool
 }
 
 func (s *turnSink) Text(t string) { s.stream.pushText(t) }
 
 func (s *turnSink) Tool(title, status string) {
+	s.toolSeen = true
 	if !s.b.config.Bot.ShowTools {
 		return
 	}

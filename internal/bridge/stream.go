@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"oc-discord/internal/chunk"
-	"oc-discord/internal/discord"
+	"github.com/G226Medi03/chat-app-adapter/chat"
+	"github.com/G226Medi03/chat-app-adapter/chunk"
 )
 
 // answerFooter is appended to the end of every conversational answer.
@@ -44,13 +44,13 @@ func modeTag(mode string) string {
 	return "[" + strings.ToUpper(string(r[0])) + string(r[1:]) + "]"
 }
 
-func (s *stream) ref() discord.MessageRef {
+func (s *stream) ref() chat.MessageRef {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return discord.MessageRef{ChannelID: s.channelID, MessageID: s.messageID}
+	return chat.MessageRef{ChannelID: s.channelID, MessageID: s.messageID}
 }
 
-func (s *stream) attach(ref discord.MessageRef) {
+func (s *stream) attach(ref chat.MessageRef) {
 	s.mu.Lock()
 	s.messageID = ref.MessageID
 	s.channelID = ref.ChannelID
@@ -148,10 +148,10 @@ func (s *stream) edit(content string) {
 	}
 	s.lastContent = content
 	s.lastEdit = time.Now()
-	ref := discord.MessageRef{ChannelID: s.channelID, MessageID: s.messageID}
+	ref := chat.MessageRef{ChannelID: s.channelID, MessageID: s.messageID}
 	s.mu.Unlock()
 
-	if err := s.b.discord_client.Edit(ref, content); err != nil {
+	if err := s.b.app.Edit(ref, content); err != nil {
 		s.b.logger.Warnf("[stream] edit 실패 channel=%s msg=%s len=%d: %v", ref.ChannelID, ref.MessageID, len(content), err)
 	}
 }

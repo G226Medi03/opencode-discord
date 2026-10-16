@@ -18,5 +18,6 @@
   "maxAgents": 8,
   "opencodeArgs": [],
   "requireMention": null,
-  "cmdTimeoutSec": 60
+  "cmdTimeoutSec": 60,
+  "model": "opencode-go/deepseek-v4.1-flash"
 }

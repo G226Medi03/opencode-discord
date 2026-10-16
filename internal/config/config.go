@@ -28,6 +28,7 @@ type BotConfig struct {
 	OpenCodeArgs         []string `json:"opencodeArgs"`
 	RequireMention       *bool    `json:"requireMention"`
 	CmdTimeoutSec        int      `json:"cmdTimeoutSec"`
+	Model                string   `json:"model"`
 }
 
 // Config is the fully resolved application configuration.
@@ -282,6 +283,7 @@ type botFile struct {
 	OpenCodeArgs         *[]string `json:"opencodeArgs"`
 	RequireMention       *bool     `json:"requireMention"`
 	CmdTimeoutSec        *int      `json:"cmdTimeoutSec"`
+	Model                *string   `json:"model"`
 }
 
 func (f botFile) merge(b *BotConfig) {
@@ -330,6 +332,9 @@ func (f botFile) merge(b *BotConfig) {
 	if f.CmdTimeoutSec != nil {
 		b.CmdTimeoutSec = *f.CmdTimeoutSec
 	}
+	if f.Model != nil {
+		b.Model = strings.TrimSpace(*f.Model)
+	}
 }
 
 func applyBotEnv(b *BotConfig) {
@@ -377,6 +382,9 @@ func applyBotEnv(b *BotConfig) {
 		if n, err := strconv.Atoi(v); err == nil {
 			b.CmdTimeoutSec = n
 		}
+	}
+	if v := strings.TrimSpace(os.Getenv("OCD_MODEL")); v != "" {
+		b.Model = v
 	}
 }
 

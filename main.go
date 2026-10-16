@@ -9,11 +9,11 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/G226Medi03/chat-app-adapter/chat/discord"
 	"oc-discord/internal/agent/opencode"
 	"oc-discord/internal/agent/pool"
 	"oc-discord/internal/bridge"
 	"oc-discord/internal/config"
-	"oc-discord/internal/discord"
 	"oc-discord/internal/logx"
 )
 
@@ -54,7 +54,7 @@ func main() {
 	log.Infof("[boot] oc-discord %s · root=%s · .env %d개 키 · state=%s", version, cfg.Root, len(cfg.EnvKeys), cfg.StatePath)
 	log.Infof("[boot] 허용채널=%v · cwd루트=%s · 길드=%s", cfg.AllowedChannelIDs, cfg.CwdRoot, cfg.GuildID)
 
-	transport := discord.New(discord.DiscordClientOption{
+	transport := discord.New(discord.Options{
 		Token:   cfg.Token,
 		AppID:   cfg.AppID,
 		GuildID: cfg.GuildID,
@@ -127,6 +127,7 @@ func printConfig(cfg *config.Config) {
 		cfg.Bot.Permissions, cfg.Bot.PermissionTimeoutSec, cfg.Bot.Threads, cfg.Bot.Stream,
 		cfg.Bot.StreamEditMS, cfg.Bot.MaxChunk, cfg.Bot.ShowTools, cfg.Bot.IdleShutdownMin, cfg.Bot.MaxAgents, cfg.Bot.CmdTimeoutSec)
 	fmt.Printf("opencode args     : %v\n", cfg.Bot.OpenCodeArgs)
+	fmt.Printf("forced model      : %s\n", orAuto(cfg.Bot.Model))
 }
 
 func orAuto(s string) string {

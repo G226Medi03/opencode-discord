@@ -22,11 +22,12 @@ type Options struct {
 
 // Entry is a pooled agent.
 type Entry struct {
-	Key      string
-	Agent    agent.Agent
-	Refs     int
-	Sessions map[string]struct{}
-	LastUsed time.Time
+	Key       string
+	Agent     agent.Agent
+	Refs      int
+	Sessions  map[string]struct{}
+	LastUsed  time.Time
+	StartedAt time.Time
 }
 
 // Pool manages agents keyed by absolute cwd.
@@ -115,14 +116,18 @@ func (p *Pool) Acquire(ctx context.Context, cwd string) (agent.Agent, string, er
 	p.evictIfNeeded()
 
 	var ag agent.Agent
-	ag, err := p.factory(key, func(error) { p.remove(key, ag) })
+	ag, err := p.factory(key, func(err error) {
+		p.log.Warnf("[pool] 프로세스 종료 감지 cwd=%s err=%v", key, err)
+		p.remove(key, ag)
+	})
 	if err != nil {
 		return nil, key, err
 	}
 	if err := ag.Start(ctx); err != nil {
 		return nil, key, err
 	}
-	e := &Entry{Key: key, Agent: ag, Refs: 1, Sessions: map[string]struct{}{}, LastUsed: time.Now()}
+	now := time.Now()
+	e := &Entry{Key: key, Agent: ag, Refs: 1, Sessions: map[string]struct{}{}, LastUsed: now, StartedAt: now}
 	p.mu.Lock()
 	p.entries[key] = e
 	p.mu.Unlock()
@@ -191,8 +196,14 @@ func (p *Pool) Kill(cwd string) bool {
 	if e == nil {
 		return false
 	}
-	e.Agent.Stop()
+	p.stopEntry("kill", e)
 	return true
+}
+
+// stopEntry stops an entry's agent and records why it was stopped.
+func (p *Pool) stopEntry(reason string, e *Entry) {
+	p.log.Infof("[pool] 종료 reason=%s pid=%d cwd=%s 가동=%s", reason, e.Agent.PID(), e.Key, time.Since(e.StartedAt).Round(time.Second))
+	e.Agent.Stop()
 }
 
 func (p *Pool) evictIfNeeded() {
@@ -219,7 +230,7 @@ func (p *Pool) evictIfNeeded() {
 	}
 	p.log.Infof("[pool] maxAgents=%d → 최고 오래된 유휴 프로세스 종료 cwd=%s", p.maxAgents, oldest.Key)
 	delete(p.entries, oldest.Key)
-	go oldest.Agent.Stop()
+	go p.stopEntry("evict", oldest)
 }
 
 func (p *Pool) reapLoop() {
@@ -251,8 +262,7 @@ func (p *Pool) reap() {
 	}
 	p.mu.Unlock()
 	for _, e := range victims {
-		p.log.Infof("[pool] 유휴 종료(%d분) cwd=%s", p.idleMin, e.Key)
-		e.Agent.Stop()
+		p.stopEntry("idle", e)
 	}
 }
 
@@ -266,6 +276,7 @@ func (p *Pool) Shutdown() {
 	}
 	p.entries = map[string]*Entry{}
 	p.mu.Unlock()
+	p.log.Infof("[pool] 전체 종료 reason=shutdown 개수=%d", len(agents))
 	var wg sync.WaitGroup
 	for _, ag := range agents {
 		wg.Add(1)

@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/G226Medi03/chat-app-adapter/chatcmd"
 	"oc-discord/internal/agent"
 	"oc-discord/internal/bindings"
-	"oc-discord/internal/chatcmd"
 	"oc-discord/internal/projects"
 	"oc-discord/internal/store"
 )
@@ -137,7 +137,8 @@ func (b *Bridge) cmdAgent(in *chatcmd.Invocation) {
 	if rt.SessionID != "" {
 		if st := b.sessionFor(key); st != nil {
 			if err := st.agent.SetMode(context.Background(), st.sessionID, value); err != nil {
-				in.Reply("에이전트 적용 실패: " + err.Error())
+				b.logger.Warnf("[cmd] 에이전트 적용 실패 mode=%s sessionId=%s pid=%d running=%v: %v", value, st.sessionID, st.agent.PID(), st.agent.Running(), err)
+				in.Reply("에이전트 적용 실패: " + describeAgentErr(err))
 				return
 			}
 			applied = true
@@ -155,23 +156,36 @@ func (b *Bridge) cmdModel(in *chatcmd.Invocation) {
 	_, key, _ := b.resolve(in.ChannelID)
 	value := strings.TrimSpace(in.Arg("value"))
 	rt := b.runtime(key)
+	forced := b.forcedModel()
 	if value == "" {
-		var avail []string
-		for _, co := range rt.ConfigOptions {
-			if co.ID == "model" {
-				for _, ov := range co.Options {
-					avail = append(avail, "`"+ov.Value+"`")
+		model := rt.Model
+		if forced != "" {
+			model = forced
+		}
+		body := "모델: `" + orDash(model) + "`"
+		if forced != "" {
+			body += " (bot-config.json / OCD_MODEL 로 고정됨 · 변경 불가)"
+		} else {
+			var avail []string
+			for _, co := range rt.ConfigOptions {
+				if co.ID == "model" {
+					for _, ov := range co.Options {
+						avail = append(avail, "`"+ov.Value+"`")
+					}
 				}
 			}
-		}
-		body := "모델: `" + orDash(rt.Model) + "`"
-		if len(avail) > 0 {
-			if len(avail) > 60 {
-				avail = avail[:60]
+			if len(avail) > 0 {
+				if len(avail) > 60 {
+					avail = avail[:60]
+				}
+				body += "\n\n사용 가능(일부):\n" + strings.Join(avail, " ")
 			}
-			body += "\n\n사용 가능(일부):\n" + strings.Join(avail, " ")
 		}
 		in.Reply(body)
+		return
+	}
+	if forced != "" {
+		in.Reply("모델이 `" + forced + "`(으)로 고정되어 있어 변경할 수 없습니다. (bot-config.json / OCD_MODEL)")
 		return
 	}
 	b.bind.Store().Update(key, func(x *store.Binding) { x.Model = value })
@@ -179,7 +193,8 @@ func (b *Bridge) cmdModel(in *chatcmd.Invocation) {
 	if rt.SessionID != "" {
 		if st := b.sessionFor(key); st != nil {
 			if _, err := st.agent.SetConfig(context.Background(), st.sessionID, "model", value); err != nil {
-				in.Reply("모델 적용 실패: " + err.Error())
+				b.logger.Warnf("[cmd] 모델 적용 실패 model=%s sessionId=%s pid=%d running=%v: %v", value, st.sessionID, st.agent.PID(), st.agent.Running(), err)
+				in.Reply("모델 적용 실패: " + describeAgentErr(err))
 				return
 			}
 			applied = true
@@ -306,7 +321,7 @@ func (b *Bridge) runSynthetic(ref bindings.ChannelRef, binding store.Binding, te
 		return
 	}
 	st := newStream(b, ref.ID, "")
-	if ph, err := b.discord_client.Send_Msg(ref.ID, thinking); err == nil {
+	if ph, err := b.app.Send(ref.ID, thinking); err == nil {
 		st.attach(ph)
 	}
 	sink := &turnSink{b: b, stream: st, key: key}
@@ -405,12 +420,16 @@ func (b *Bridge) statusText(ref bindings.ChannelRef, key string, binding store.B
 		busy = "busy"
 	}
 	bo := b.config.Bot
+	modelLine := orDash(rt.Model)
+	if forced := b.forcedModel(); forced != "" {
+		modelLine = orDash(forced) + " (고정)"
+	}
 	return strings.Join([]string{
 		"채널: " + bindings.Label(ref),
 		"바인딩 키: `" + key + "`",
 		"cwd: " + cwdLine,
 		"세션: `" + orDash(rt.SessionID) + "`",
-		"에이전트: " + orDash(rt.Agent) + " · 모델: " + orDash(rt.Model),
+		"에이전트: " + orDash(rt.Agent) + " · 모델: " + modelLine,
 		fmt.Sprintf("프로세스: %s · 턴: %s", proc, busy),
 		fmt.Sprintf("정책: permissions=%s · stream=%v", bo.Permissions, bo.Stream),
 		fmt.Sprintf("풀 프로세스: %d개 · 대기열: %d", b.agent_pool.Size(), b.queueDepth(key)),
