@@ -322,6 +322,22 @@ func (b *Bridge) ensureSession(ctx context.Context, ref bindings.ChannelRef, key
 	return st, nil
 }
 
+// ensureLiveSession returns a session backed by a running process, restarting
+// the agent and resuming the saved session when the old process has exited.
+// The caller must Release the returned pool key.
+func (b *Bridge) ensureLiveSession(ctx context.Context, ref bindings.ChannelRef, key string, binding store.Binding) (*sessionState, string, error) {
+	ag, agKey, err := b.agent_pool.Acquire(ctx, binding.Cwd)
+	if err != nil {
+		return nil, "", err
+	}
+	st, err := b.ensureSession(ctx, ref, key, ag, agKey, binding)
+	if err != nil {
+		b.agent_pool.Release(agKey)
+		return nil, "", err
+	}
+	return st, agKey, nil
+}
+
 // ---- helpers -------------------------------------------------------------
 
 // describeAgentErr turns an ACP error into a message the Discord user can act on.

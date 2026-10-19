@@ -67,7 +67,7 @@ func (b *Bridge) cmdNew(in *chatcmd.Invocation) {
 func (b *Bridge) cmdStop(in *chatcmd.Invocation) {
 	ref := b.channelRef(in.ChannelID)
 	st := b.sessionFor(bindings.Key(ref))
-	if st == nil || st.agent == nil || st.sessionID == "" {
+	if st == nil || st.agent == nil || st.sessionID == "" || !st.agent.Running() {
 		in.Reply("진행 중인 세션이 없습니다.")
 		return
 	}
@@ -113,7 +113,7 @@ func (b *Bridge) cmdCwd(in *chatcmd.Invocation) {
 }
 
 func (b *Bridge) cmdAgent(in *chatcmd.Invocation) {
-	_, key, _ := b.resolve(in.ChannelID)
+	ref, key, binding := b.resolve(in.ChannelID)
 	value := strings.TrimSpace(in.Arg("value"))
 	rt := b.runtime(key)
 	if value == "" {
@@ -133,27 +133,33 @@ func (b *Bridge) cmdAgent(in *chatcmd.Invocation) {
 		return
 	}
 	b.bind.Store().Update(key, func(x *store.Binding) { x.Agent = value })
-	applied := false
-	if rt.SessionID != "" {
-		if st := b.sessionFor(key); st != nil {
-			if err := st.agent.SetMode(context.Background(), st.sessionID, value); err != nil {
-				b.logger.Warnf("[cmd] 에이전트 적용 실패 mode=%s sessionId=%s pid=%d running=%v: %v", value, st.sessionID, st.agent.PID(), st.agent.Running(), err)
-				in.Reply("에이전트 적용 실패: " + describeAgentErr(err))
-				return
-			}
-			applied = true
-			b.setSessionMode(key, value)
-		}
-	}
+	binding.Agent = value
 	msg := "에이전트 = `" + value + "`"
-	if !applied {
-		msg += " (다음 세션 생성 시 적용)"
+	if binding.Cwd == "" || !projects.IsDir(binding.Cwd) {
+		in.Reply(msg + " (cwd 미결정 — 다음 세션 생성 시 적용)")
+		return
 	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	st, agKey, err := b.ensureLiveSession(ctx, ref, key, binding)
+	if err != nil {
+		b.logger.Warnf("[cmd] 에이전트 적용용 세션 확보 실패 mode=%s cwd=%s: %v", value, binding.Cwd, err)
+		in.Reply(msg + " (설정 저장됨 — 다음 세션 생성 시 적용)")
+		return
+	}
+	defer b.agent_pool.Release(agKey)
+	if err := st.agent.SetMode(ctx, st.sessionID, value); err != nil {
+		b.logger.Warnf("[cmd] 에이전트 적용 실패 mode=%s sessionId=%s pid=%d running=%v: %v", value, st.sessionID, st.agent.PID(), st.agent.Running(), err)
+		in.Reply(msg + " (설정 저장됨 — 다음 세션 생성 시 적용: " + describeAgentErr(err) + ")")
+		return
+	}
+	b.setSessionMode(key, value)
 	in.Reply(msg)
 }
 
 func (b *Bridge) cmdModel(in *chatcmd.Invocation) {
-	_, key, _ := b.resolve(in.ChannelID)
+	ref, key, binding := b.resolve(in.ChannelID)
 	value := strings.TrimSpace(in.Arg("value"))
 	rt := b.runtime(key)
 	forced := b.forcedModel()
@@ -189,20 +195,26 @@ func (b *Bridge) cmdModel(in *chatcmd.Invocation) {
 		return
 	}
 	b.bind.Store().Update(key, func(x *store.Binding) { x.Model = value })
-	applied := false
-	if rt.SessionID != "" {
-		if st := b.sessionFor(key); st != nil {
-			if _, err := st.agent.SetConfig(context.Background(), st.sessionID, "model", value); err != nil {
-				b.logger.Warnf("[cmd] 모델 적용 실패 model=%s sessionId=%s pid=%d running=%v: %v", value, st.sessionID, st.agent.PID(), st.agent.Running(), err)
-				in.Reply("모델 적용 실패: " + describeAgentErr(err))
-				return
-			}
-			applied = true
-		}
-	}
+	binding.Model = value
 	msg := "모델 = `" + value + "`"
-	if !applied {
-		msg += " (다음 세션 생성 시 적용)"
+	if binding.Cwd == "" || !projects.IsDir(binding.Cwd) {
+		in.Reply(msg + " (cwd 미결정 — 다음 세션 생성 시 적용)")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	st, agKey, err := b.ensureLiveSession(ctx, ref, key, binding)
+	if err != nil {
+		b.logger.Warnf("[cmd] 모델 적용용 세션 확보 실패 model=%s cwd=%s: %v", value, binding.Cwd, err)
+		in.Reply(msg + " (설정 저장됨 — 다음 세션 생성 시 적용)")
+		return
+	}
+	defer b.agent_pool.Release(agKey)
+	if _, err := st.agent.SetConfig(ctx, st.sessionID, "model", value); err != nil {
+		b.logger.Warnf("[cmd] 모델 적용 실패 model=%s sessionId=%s pid=%d running=%v: %v", value, st.sessionID, st.agent.PID(), st.agent.Running(), err)
+		in.Reply(msg + " (설정 저장됨 — 다음 세션 생성 시 적용: " + describeAgentErr(err) + ")")
+		return
 	}
 	in.Reply(msg)
 }
@@ -383,6 +395,9 @@ func (b *Bridge) runtime(key string) rtInfo {
 	if st.agent != nil {
 		info.PID = st.agent.PID()
 		info.Running = st.agent.Running()
+		if !info.Running {
+			return info
+		}
 		if meta, ok := st.agent.Meta(st.sessionID); ok {
 			info.ConfigOptions = meta.Config
 			for _, co := range meta.Config {
@@ -408,12 +423,10 @@ func (b *Bridge) statusText(ref bindings.ChannelRef, key string, binding store.B
 		}
 	}
 	proc := "(미기동)"
-	if rt.PID != 0 {
-		state := "stopped"
-		if rt.Running {
-			state = "running"
-		}
-		proc = fmt.Sprintf("pid %d (%s)", rt.PID, state)
+	if rt.PID != 0 && rt.Running {
+		proc = fmt.Sprintf("pid %d (running)", rt.PID)
+	} else if rt.PID != 0 {
+		proc = fmt.Sprintf("pid %d (종료됨 — 다음 메시지에서 재기동)", rt.PID)
 	}
 	busy := "idle"
 	if rt.Busy {
