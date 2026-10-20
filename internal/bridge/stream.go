@@ -215,7 +215,7 @@ func assembleAnswer(header, head, body, footer string, limit int) []string {
 	if room < 50 {
 		room = 50
 	}
-	chunks := chunk.Split(body, room)
+	chunks := splitAnswer(body, room)
 	if len(chunks) == 0 {
 		chunks = []string{"(빈 응답)"}
 	}
