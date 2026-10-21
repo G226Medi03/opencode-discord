@@ -38,6 +38,13 @@ type Bridge struct {
 	queues    map[string]*chain
 	sessions  map[string]*sessionState
 	autoAllow map[string]bool
+	pending   map[string]pendingConfig
+}
+
+// pendingConfig holds mode/model changes requested while a turn was running.
+type pendingConfig struct {
+	mode  string
+	model string
 }
 
 type sessionState struct {
@@ -61,6 +68,7 @@ func New(cfg *config.Config, log *logx.Logger, t chat.App, pool agent.Pool) *Bri
 		queues:     map[string]*chain{},
 		sessions:   map[string]*sessionState{},
 		autoAllow:  map[string]bool{},
+		pending:    map[string]pendingConfig{},
 	}
 	b.registry = b.buildRegistry()
 	return b
@@ -210,6 +218,10 @@ func (b *Bridge) runTurn(m chat.Message, ref bindings.ChannelRef, key string, bi
 		b.sendChannel(ref.ID, fmt.Sprintf("세션 생성 실패: `%v`", err))
 		return
 	}
+	// Apply any change requested while an earlier turn was running, and make
+	// sure a change made during this turn is applied right after it ends.
+	b.applyPending(ctx, key, sess)
+	defer b.applyPending(ctx, key, sess)
 
 	// Optional: answer inside a new thread that shares the parent session.
 	if b.config.Bot.Threads && !ref.IsDM && !ref.IsThread {
@@ -349,6 +361,112 @@ func (b *Bridge) ensureLiveSession(ctx context.Context, ref bindings.ChannelRef,
 		return nil, "", err
 	}
 	return st, agKey, nil
+}
+
+// turnActive reports whether a turn is running or queued for key.
+func (b *Bridge) turnActive(key string) bool {
+	b.mu.Lock()
+	c := b.queues[key]
+	b.mu.Unlock()
+	return c != nil && c.busy()
+}
+
+// setPendingMode records a mode change to apply when the current turn ends.
+func (b *Bridge) setPendingMode(key, mode string) {
+	b.mu.Lock()
+	p := b.pending[key]
+	p.mode = mode
+	b.pending[key] = p
+	b.mu.Unlock()
+}
+
+// setPendingModel records a model change to apply when the current turn ends.
+func (b *Bridge) setPendingModel(key, model string) {
+	b.mu.Lock()
+	p := b.pending[key]
+	p.model = model
+	b.pending[key] = p
+	b.mu.Unlock()
+}
+
+// clearPendingMode drops a deferred mode change, used when the command applies
+// immediately so an older pending value cannot override it later.
+func (b *Bridge) clearPendingMode(key string) {
+	b.mu.Lock()
+	p := b.pending[key]
+	p.mode = ""
+	if p.mode == "" && p.model == "" {
+		delete(b.pending, key)
+	} else {
+		b.pending[key] = p
+	}
+	b.mu.Unlock()
+}
+
+// clearPendingModel drops a deferred model change.
+func (b *Bridge) clearPendingModel(key string) {
+	b.mu.Lock()
+	p := b.pending[key]
+	p.model = ""
+	if p.mode == "" && p.model == "" {
+		delete(b.pending, key)
+	} else {
+		b.pending[key] = p
+	}
+	b.mu.Unlock()
+}
+
+// applyPending applies a mode/model change that was deferred while a turn was
+// running. It is called at the end of a turn, so the change takes effect right
+// after the reply finishes and before the next queued turn starts.
+func (b *Bridge) applyPending(ctx context.Context, key string, st *sessionState) {
+	b.mu.Lock()
+	p, ok := b.pending[key]
+	if ok {
+		delete(b.pending, key)
+	}
+	b.mu.Unlock()
+	if !ok || (p.mode == "" && p.model == "") {
+		return
+	}
+	if st == nil || st.agent == nil || st.sessionID == "" || !st.agent.Running() {
+		b.logger.Warnf("[cmd] 예약 적용 보류 key=%s mode=%s model=%s (세션 없음)", key, p.mode, p.model)
+		return
+	}
+	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	failed := false
+	if p.mode != "" {
+		if err := st.agent.SetMode(cctx, st.sessionID, p.mode); err != nil {
+			b.logger.Warnf("[cmd] 예약 모드 적용 실패 key=%s mode=%s: %v", key, p.mode, err)
+			failed = true
+		} else {
+			st.mode = p.mode
+			b.logger.Infof("[cmd] 예약 모드 적용 key=%s mode=%s", key, p.mode)
+		}
+	}
+	if p.model != "" {
+		if _, err := st.agent.SetConfig(cctx, st.sessionID, "model", p.model); err != nil {
+			b.logger.Warnf("[cmd] 예약 모델 적용 실패 key=%s model=%s: %v", key, p.model, err)
+			failed = true
+		} else {
+			b.logger.Infof("[cmd] 예약 모델 적용 key=%s model=%s", key, p.model)
+		}
+	}
+	if failed {
+		// Keep the value so the next turn retries it before prompting.
+		b.mu.Lock()
+		cur := b.pending[key]
+		if cur.mode == "" {
+			cur.mode = p.mode
+		}
+		if cur.model == "" {
+			cur.model = p.model
+		}
+		b.pending[key] = cur
+		b.mu.Unlock()
+	}
 }
 
 // ---- helpers -------------------------------------------------------------
@@ -562,6 +680,12 @@ func (c *chain) depth() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return len(c.items)
+}
+
+func (c *chain) busy() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.running || len(c.items) > 0
 }
 
 func (b *Bridge) enqueue(key string, fn func()) {

@@ -140,6 +140,13 @@ func (b *Bridge) cmdAgent(in *chatcmd.Invocation) {
 	b.bind.Store().Update(key, func(x *store.Binding) { x.Agent = value })
 	binding.Agent = value
 	msg := "에이전트 = `" + value + "`"
+	if b.turnActive(key) {
+		b.setPendingMode(key, value)
+		b.logger.Infof("[cmd] 모드 변경 예약(턴 진행 중) key=%s mode=%s", key, value)
+		in.Reply(msg + " (현재 턴이 끝난 뒤 적용합니다)")
+		return
+	}
+	b.clearPendingMode(key)
 	if binding.Cwd == "" || !projects.IsDir(binding.Cwd) {
 		in.Reply(msg + " (cwd 미결정 — 다음 세션 생성 시 적용)")
 		return
@@ -202,6 +209,13 @@ func (b *Bridge) cmdModel(in *chatcmd.Invocation) {
 	b.bind.Store().Update(key, func(x *store.Binding) { x.Model = value })
 	binding.Model = value
 	msg := "모델 = `" + value + "`"
+	if b.turnActive(key) {
+		b.setPendingModel(key, value)
+		b.logger.Infof("[cmd] 모델 변경 예약(턴 진행 중) key=%s model=%s", key, value)
+		in.Reply(msg + " (현재 턴이 끝난 뒤 적용합니다)")
+		return
+	}
+	b.clearPendingModel(key)
 	if binding.Cwd == "" || !projects.IsDir(binding.Cwd) {
 		in.Reply(msg + " (cwd 미결정 — 다음 세션 생성 시 적용)")
 		return
