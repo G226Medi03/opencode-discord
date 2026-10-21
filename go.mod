@@ -3,7 +3,7 @@ module oc-discord
 go 1.25.5
 
 require (
-	github.com/G226Medi03/chat-app-adapter v0.1.0
+	github.com/G226Medi03/chat-app-adapter v0.1.1
 	github.com/bwmarrin/discordgo v0.29.0 // indirect
 )
 

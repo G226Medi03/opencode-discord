@@ -1,5 +1,5 @@
-github.com/G226Medi03/chat-app-adapter v0.1.0 h1:AtFS16w2TQjl+vDxwc0GWxD+wz0MfZeZt9vnbaHGSEY=
-github.com/G226Medi03/chat-app-adapter v0.1.0/go.mod h1:n9a3fAfuhUxioVr/RX10c6iSUWfrfVBALyPtzxIuS0U=
+github.com/G226Medi03/chat-app-adapter v0.1.1 h1:B6tW36Xdwddm9ijw0Jbp4pOnOZ0Ot+9r7W+XhzO5JPs=
+github.com/G226Medi03/chat-app-adapter v0.1.1/go.mod h1:n9a3fAfuhUxioVr/RX10c6iSUWfrfVBALyPtzxIuS0U=
 github.com/bwmarrin/discordgo v0.29.0 h1:FmWeXFaKUwrcL3Cx65c20bTRW+vOb6k8AnaP+EgjDno=
 github.com/bwmarrin/discordgo v0.29.0/go.mod h1:NJZpH+1AfhIcyQsPeuBKsUtYrRnjkyu0kIVMCHkZtRY=
 github.com/gorilla/websocket v1.4.2 h1:+/TMaTYc4QFitKJxsQ7Yye35DkWvkdLcvGKqM+x0Ufc=

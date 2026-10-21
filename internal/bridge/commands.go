@@ -2,12 +2,15 @@ package bridge
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/G226Medi03/chat-app-adapter/chat"
 	"github.com/G226Medi03/chat-app-adapter/chatcmd"
 	"oc-discord/internal/agent"
 	"oc-discord/internal/bindings"
@@ -37,6 +40,8 @@ func (b *Bridge) buildRegistry() *chatcmd.Registry {
 	r.Add(&chatcmd.Command{Name: "compact", Description: "세션 컨텍스트 압축(/compact 실행)", Usage: "/compact · !compact", Handler: b.cmdCompact})
 	r.Add(&chatcmd.Command{Name: "cmd", Description: "이 채널의 cwd 에서 셸 명령 실행(owner 전용)", Usage: "/cmd <명령> · !cmd <명령>",
 		Options: []chatcmd.Option{strOpt("command", "실행할 cmd 명령", true)}, ArgName: "command", Handler: b.cmdShell})
+	r.Add(&chatcmd.Command{Name: "file", Description: "이 채널의 cwd 에서 파일 첨부 전송(owner 전용)", Usage: "/file <경로> · !file <경로>",
+		Options: []chatcmd.Option{strOpt("path", "전송할 파일 경로(cwd 기준)", true)}, ArgName: "path", Handler: b.cmdFile})
 	return r
 }
 
@@ -274,6 +279,78 @@ func (b *Bridge) cmdCompact(in *chatcmd.Invocation) {
 		}
 		b.runSynthetic(ref, *bp, "/compact")
 	})
+}
+
+func (b *Bridge) cmdFile(in *chatcmd.Invocation) {
+	ref := b.channelRef(in.ChannelID)
+	bindingPtr := b.bind.Ensure(ref)
+	if bindingPtr == nil || bindingPtr.Cwd == "" {
+		in.Reply("이 채널의 cwd 가 결정되지 않았습니다. `/cwd <경로>` 로 지정하세요.")
+		return
+	}
+	raw := strings.TrimSpace(in.Arg("path"))
+	target, err := resolveInsideCwd(bindingPtr.Cwd, raw)
+	if err != nil {
+		in.Reply(err.Error())
+		return
+	}
+	fi, err := os.Stat(target)
+	if err != nil {
+		in.Reply("파일이 없습니다: `" + raw + "`")
+		return
+	}
+	if fi.IsDir() {
+		in.Reply("폴더는 보낼 수 없습니다: `" + raw + "`")
+		return
+	}
+	name := filepath.Base(target)
+	if _, err := b.app.SendFile(ref.ID, "📎 "+name, target); err != nil {
+		if errors.Is(err, chat.ErrFileTooLarge) {
+			in.Reply(fmt.Sprintf("Discord 파일 용량 제한을 초과해 전송할 수 없습니다 (파일: %s, %s).", name, humanSize(fi.Size())))
+			return
+		}
+		b.logger.Warnf("[file] 전송 실패 path=%s size=%d: %v", target, fi.Size(), err)
+		in.Reply("파일 전송 실패: " + err.Error())
+		return
+	}
+	b.logger.Infof("[file] 전송 path=%s size=%d", target, fi.Size())
+}
+
+// resolveInsideCwd resolves a path and rejects anything outside cwd.
+func resolveInsideCwd(cwd, raw string) (string, error) {
+	if raw == "" {
+		return "", fmt.Errorf("사용법: `/file <경로>` 또는 `!file <경로>`")
+	}
+	p := raw
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(cwd, p)
+	}
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return "", err
+	}
+	base, err := filepath.Abs(cwd)
+	if err != nil {
+		return "", err
+	}
+	if !inside(base, abs) {
+		return "", fmt.Errorf("cwd 밖 경로는 보낼 수 없습니다: `%s`", raw)
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		if baseReal, err := filepath.EvalSymlinks(base); err == nil && !inside(baseReal, resolved) {
+			return "", fmt.Errorf("cwd 밖 경로는 보낼 수 없습니다: `%s`", raw)
+		}
+		abs = resolved
+	}
+	return abs, nil
+}
+
+func inside(base, target string) bool {
+	rel, err := filepath.Rel(base, target)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
 }
 
 func (b *Bridge) cmdShell(in *chatcmd.Invocation) {

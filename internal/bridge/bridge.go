@@ -113,22 +113,24 @@ func (b *Bridge) handleMessage(m chat.Message) {
 		return
 	}
 	text := b.extractText(m.Content)
-	if text == "" {
+	if text == "" && len(m.Attachments) == 0 {
 		return
 	}
 
 	key := bindings.Key(ref)
 
 	// Slash-equivalent text triggers ("/cmd dir" or "!cmd dir").
-	if name, rest, ok := b.registry.Parse(text); ok {
-		b.dispatch(&chatcmd.Invocation{
-			Name:      name,
-			Args:      b.registry.TextArgs(name, rest),
-			ChannelID: m.ChannelID,
-			UserID:    m.AuthorID,
-			Reply:     func(c string) { b.sendChannel(m.ChannelID, c) },
-		})
-		return
+	if text != "" {
+		if name, rest, ok := b.registry.Parse(text); ok {
+			b.dispatch(&chatcmd.Invocation{
+				Name:      name,
+				Args:      b.registry.TextArgs(name, rest),
+				ChannelID: m.ChannelID,
+				UserID:    m.AuthorID,
+				Reply:     func(c string) { b.sendChannel(m.ChannelID, c) },
+			})
+			return
+		}
 	}
 
 	bindingPtr := b.bind.Ensure(ref)
@@ -182,6 +184,17 @@ func (b *Bridge) runTurn(m chat.Message, ref bindings.ChannelRef, key string, bi
 	if !projects.IsDir(cwd) {
 		b.sendChannel(ref.ID, fmt.Sprintf("cwd 폴더가 없습니다: `%s`", cwd))
 		return
+	}
+
+	atts, err := b.downloadAttachments(m)
+	if err != nil {
+		b.logger.Warnf("[attach] 처리 실패 message=%s: %v", m.ID, err)
+		b.sendChannel(ref.ID, "첨부 파일 처리 실패: "+err.Error())
+		return
+	}
+	promptText := text
+	if strings.TrimSpace(promptText) == "" && len(atts) > 0 {
+		promptText = "첨부한 파일을 확인해 주세요."
 	}
 
 	ag, agKey, err := b.agent_pool.Acquire(ctx, cwd)
@@ -239,7 +252,7 @@ func (b *Bridge) runTurn(m chat.Message, ref bindings.ChannelRef, key string, bi
 		return b.handlePermission(ref, sess.sessionID, req)
 	}
 
-	stop, err := ag.Prompt(ctx, sess.sessionID, b.buildPrompt(m, ref, text, sess.mode), sink, perm)
+	stop, err := ag.Prompt(ctx, sess.sessionID, b.buildPrompt(m, ref, promptText, sess.mode, atts), sink, perm)
 	b.agent_pool.Release(agKey)
 	if err != nil && !ag.Running() && st.length() == 0 && !sink.toolSeen {
 		b.logger.Warnf("[turn] 프로세스 종료로 실패 — 세션 %s 로 재기동 후 재시도 key=%s: %v", sess.sessionID, key, err)
@@ -253,7 +266,7 @@ func (b *Bridge) runTurn(m chat.Message, ref bindings.ChannelRef, key string, bi
 			}
 		}
 		if err == nil {
-			stop, err = ag.Prompt(ctx, sess.sessionID, b.buildPrompt(m, ref, text, sess.mode), sink, perm)
+			stop, err = ag.Prompt(ctx, sess.sessionID, b.buildPrompt(m, ref, promptText, sess.mode, atts), sink, perm)
 			b.agent_pool.Release(agKey)
 		}
 	}
@@ -452,21 +465,27 @@ func (b *Bridge) unresolvedNotice(ref bindings.ChannelRef) string {
 	}, "\n")
 }
 
-func (b *Bridge) buildPrompt(m chat.Message, ref bindings.ChannelRef, text, mode string) string {
+func (b *Bridge) buildPrompt(m chat.Message, ref bindings.ChannelRef, text, mode string, atts []attachmentInfo) string {
 	if mode == "" {
 		mode = "build"
 	}
-	return strings.Join([]string{
+	lines := []string{
 		"<discord_message_context>",
 		"authorLabel: " + m.AuthorName,
 		"channel: #" + chanName(ref),
 		fmt.Sprintf("isOwner: %v", b.isOwner(m.AuthorID)),
 		"</discord_message_context>",
+	}
+	if block := formatAttachments(atts); block != "" {
+		lines = append(lines, "", block)
+	}
+	lines = append(lines,
 		"",
-		`<user_input mode="` + mode + `">`,
+		`<user_input mode="`+mode+`">`,
 		text,
 		"</user_input>",
-	}, "\n")
+	)
+	return strings.Join(lines, "\n")
 }
 
 func chanName(ref bindings.ChannelRef) string {
