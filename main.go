@@ -128,7 +128,6 @@ func printConfig(cfg *config.Config) {
 		cfg.Bot.StreamEditMS, cfg.Bot.MaxChunk, cfg.Bot.ShowTools, cfg.Bot.IdleShutdownMin, cfg.Bot.MaxAgents, cfg.Bot.CmdTimeoutSec)
 	fmt.Printf("opencode args     : %v\n", cfg.Bot.OpenCodeArgs)
 	fmt.Printf("forced model      : %s\n", orAuto(cfg.Bot.Model))
-	fmt.Printf("extra instructions: %d chars\n", len([]rune(cfg.Bot.ExtraInstructions)))
 }
 
 func orAuto(s string) string {

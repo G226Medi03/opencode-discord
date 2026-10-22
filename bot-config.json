@@ -19,6 +19,5 @@
   "opencodeArgs": [],
   "requireMention": null,
   "cmdTimeoutSec": 60,
-  "model": "opencode-go/deepseek-v4.1-flash",
-  "extraInstructions": "Long runs (full builds, tests, E2E) need a generous shell tool timeout (for example 3600000 ms) and a harness timeout longer than that. Do not cap long runs at 20 minutes; prefer background execution with polling when a command may outlive the tool timeout."
+  "model": "opencode-go/deepseek-v4.1-flash"
 }

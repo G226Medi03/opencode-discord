@@ -29,7 +29,6 @@ type BotConfig struct {
 	RequireMention       *bool    `json:"requireMention"`
 	CmdTimeoutSec        int      `json:"cmdTimeoutSec"`
 	Model                string   `json:"model"`
-	ExtraInstructions    string   `json:"extraInstructions"`
 }
 
 // Config is the fully resolved application configuration.
@@ -285,7 +284,6 @@ type botFile struct {
 	RequireMention       *bool     `json:"requireMention"`
 	CmdTimeoutSec        *int      `json:"cmdTimeoutSec"`
 	Model                *string   `json:"model"`
-	ExtraInstructions    *string   `json:"extraInstructions"`
 }
 
 func (f botFile) merge(b *BotConfig) {
@@ -337,9 +335,6 @@ func (f botFile) merge(b *BotConfig) {
 	if f.Model != nil {
 		b.Model = strings.TrimSpace(*f.Model)
 	}
-	if f.ExtraInstructions != nil {
-		b.ExtraInstructions = strings.TrimSpace(*f.ExtraInstructions)
-	}
 }
 
 func applyBotEnv(b *BotConfig) {
@@ -390,9 +385,6 @@ func applyBotEnv(b *BotConfig) {
 	}
 	if v := strings.TrimSpace(os.Getenv("OCD_MODEL")); v != "" {
 		b.Model = v
-	}
-	if v := strings.TrimSpace(os.Getenv("OCD_EXTRA_INSTRUCTIONS")); v != "" {
-		b.ExtraInstructions = v
 	}
 }
 
