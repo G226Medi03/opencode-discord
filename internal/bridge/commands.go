@@ -34,6 +34,8 @@ func (b *Bridge) buildRegistry() *chatcmd.Registry {
 		Options: []chatcmd.Option{strOpt("value", "build | plan 등", false)}, ArgName: "value", Handler: b.cmdAgent})
 	r.Add(&chatcmd.Command{Name: "mode", Description: "에이전트(mode) 별칭", Usage: "/mode [value] · !mode [value]",
 		Options: []chatcmd.Option{strOpt("value", "build | plan 등", false)}, ArgName: "value", Handler: b.cmdAgent})
+	r.Add(&chatcmd.Command{Name: "build", Description: "빌드 모드로 전환", Usage: "/build · !build", Handler: b.cmdBuild})
+	r.Add(&chatcmd.Command{Name: "plan", Description: "플랜 모드로 전환", Usage: "/plan · !plan", Handler: b.cmdPlan})
 	r.Add(&chatcmd.Command{Name: "model", Description: "모델 확인/변경", Usage: "/model [id] · !model [id]",
 		Options: []chatcmd.Option{strOpt("value", "provider/model (생략 시 목록)", false)}, ArgName: "value", Handler: b.cmdModel})
 	r.Add(&chatcmd.Command{Name: "sessions", Description: "이 프로젝트의 세션 목록", Usage: "/sessions · !sessions", Handler: b.cmdSessions})
@@ -168,6 +170,23 @@ func (b *Bridge) cmdAgent(in *chatcmd.Invocation) {
 	}
 	b.setSessionMode(key, value)
 	in.Reply(msg)
+}
+
+func (b *Bridge) cmdBuild(in *chatcmd.Invocation) { b.cmdModeShortcut(in, "build") }
+
+func (b *Bridge) cmdPlan(in *chatcmd.Invocation) { b.cmdModeShortcut(in, "plan") }
+
+// cmdModeShortcut applies a fixed mode through the normal /agent path, so it
+// gets the same validation, deferral and error handling.
+func (b *Bridge) cmdModeShortcut(in *chatcmd.Invocation, mode string) {
+	b.cmdAgent(&chatcmd.Invocation{
+		Name:      "agent",
+		Args:      map[string]string{"value": mode},
+		ChannelID: in.ChannelID,
+		UserID:    in.UserID,
+		IsSlash:   in.IsSlash,
+		Reply:     in.Reply,
+	})
 }
 
 func (b *Bridge) cmdModel(in *chatcmd.Invocation) {
