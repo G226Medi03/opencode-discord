@@ -597,6 +597,9 @@ func (b *Bridge) buildPrompt(m chat.Message, ref bindings.ChannelRef, text, mode
 	if block := formatAttachments(atts); block != "" {
 		lines = append(lines, "", block)
 	}
+	if extra := strings.TrimSpace(b.config.Bot.ExtraInstructions); extra != "" {
+		lines = append(lines, "", "<runtime_instructions>", extra, "</runtime_instructions>")
+	}
 	lines = append(lines,
 		"",
 		`<user_input mode="`+mode+`">`,
