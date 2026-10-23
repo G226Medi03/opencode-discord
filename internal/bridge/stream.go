@@ -164,17 +164,18 @@ func (s *stream) finish() {
 	}
 	s.closed = true
 	header := s.headerLocked()
-	head := s.headLocked()
+	headLines := len(s.toolLines)
 	body := s.text.String()
 	hasMsg := s.messageID != ""
 	s.mu.Unlock()
 
-	pieces := assembleAnswer(header, head, body, answerFooter, s.b.config.Bot.MaxChunk)
+	// Tool status lines are live-progress only; the finished answer must be clean.
+	pieces := assembleAnswer(header, "", body, answerFooter, s.b.config.Bot.MaxChunk)
 	maxPiece := 0
 	for _, p := range pieces {
 		maxPiece = maxInt(maxPiece, chunk.Len(p))
 	}
-	s.b.logger.Infof("[stream] finish channel=%s pieces=%d maxPieceChars=%d hasMsg=%v bodyChars=%d", s.channelID, len(pieces), maxPiece, hasMsg, chunk.Len(body))
+	s.b.logger.Infof("[stream] finish channel=%s pieces=%d maxPieceChars=%d hasMsg=%v hasHead=%v bodyChars=%d", s.channelID, len(pieces), maxPiece, hasMsg, headLines > 0, chunk.Len(body))
 
 	if hasMsg {
 		s.edit(pieces[0])
