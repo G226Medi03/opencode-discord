@@ -2,7 +2,10 @@ package main
 
 import (
 	"database/sql"
+	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -234,5 +237,125 @@ func TestDateHelpers(t *testing.T) {
 	}
 	if parseInt64("bad") != 0 || parseFloat("bad") != 0 {
 		t.Fatal("invalid numbers should be zero")
+	}
+}
+
+// ---- snapshots / git -----------------------------------------------------
+
+func TestSnapshotFromData(t *testing.T) {
+	data := []byte(`{"snapshot":{"start":"0123456789abcdef","end":"fedcba9876543210","files":["a.go","b.go"]}}`)
+	s := snapshotFromData(data)
+	if s.Start != "0123456789abcdef" || s.End != "fedcba9876543210" {
+		t.Fatalf("snapshot: %#v", s)
+	}
+	if s.StartShort != "01234567" || s.EndShort != "fedcba98" {
+		t.Fatalf("shorts: %#v", s)
+	}
+	if len(s.Files) != 2 || s.Files[0] != "a.go" {
+		t.Fatalf("files: %#v", s.Files)
+	}
+	if empty := snapshotFromData([]byte(`{}`)); empty.Start != "" {
+		t.Fatalf("expected empty snapshot: %#v", empty)
+	}
+}
+
+func gitTest(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func TestGitHelpers(t *testing.T) {
+	dir := t.TempDir()
+	gitTest(t, dir, "init", "-q")
+	gitTest(t, dir, "config", "user.email", "test@example.com")
+	gitTest(t, dir, "config", "user.name", "test")
+
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitTest(t, dir, "add", ".")
+	gitTest(t, dir, "commit", "-qm", "one")
+	tree1 := gitTest(t, dir, "rev-parse", "HEAD^{tree}")
+
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("two\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte("bee\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitTest(t, dir, "add", ".")
+	gitTest(t, dir, "commit", "-qm", "two")
+	tree2 := gitTest(t, dir, "rev-parse", "HEAD^{tree}")
+
+	shadow := filepath.Join(dir, ".git")
+	changes, err := changedFiles(shadow, tree1, tree2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 2 {
+		t.Fatalf("changes: %#v", changes)
+	}
+	a, ok := findChange(changes, "a.txt")
+	if !ok || a.Status != "M" || a.Additions != 1 || a.Deletions != 1 {
+		t.Fatalf("a.txt: %#v ok=%v", a, ok)
+	}
+	b, ok := findChange(changes, "b.txt")
+	if !ok || b.Status != "A" || b.Additions != 1 {
+		t.Fatalf("b.txt: %#v ok=%v", b, ok)
+	}
+	if _, ok := findChange(changes, "missing.txt"); ok {
+		t.Fatal("missing file should not be found")
+	}
+
+	content, _, binary, err := fileAt(shadow, tree2, "a.txt")
+	if err != nil || binary || content != "two\n" {
+		t.Fatalf("fileAt after: %q binary=%v err=%v", content, binary, err)
+	}
+	if _, _, _, err := fileAt(shadow, tree1, "b.txt"); err == nil {
+		t.Fatal("b.txt should not exist at tree1")
+	}
+
+	diff, truncated, err := fileDiff(shadow, tree1, tree2, "a.txt")
+	if err != nil || truncated {
+		t.Fatalf("diff err=%v truncated=%v", err, truncated)
+	}
+	if !strings.Contains(diff, "-one") || !strings.Contains(diff, "+two") {
+		t.Fatalf("unexpected diff:\n%s", diff)
+	}
+}
+
+func TestFindSnapshotRepoIn(t *testing.T) {
+	base := t.TempDir()
+	repo := filepath.Join(base, "abc123")
+	if err := os.MkdirAll(filepath.Join(repo, "objects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "HEAD"), []byte("ref: refs/heads/master\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := findSnapshotRepoIn(base)
+	if err != nil || got != repo {
+		t.Fatalf("got %q err=%v", got, err)
+	}
+	if _, err := findSnapshotRepoIn(t.TempDir()); err == nil {
+		t.Fatal("expected error for empty base")
+	}
+}
+
+func TestColorizeDiff(t *testing.T) {
+	got := string(colorizeDiff("@@ -1 +1 @@\n-old <x>\n+new <y>\n context"))
+	for _, want := range []string{`class="hunk"`, `class="del"`, `class="add"`, "&lt;x&gt;"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q in:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "<x>") {
+		t.Fatalf("diff was not escaped:\n%s", got)
 	}
 }
