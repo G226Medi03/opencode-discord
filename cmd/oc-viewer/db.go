@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -44,6 +45,25 @@ type message struct {
 	Data    []byte
 }
 
+type projectFilter struct {
+	Q        string
+	From, To int64
+	Sort     string
+}
+
+type sessionFilter struct {
+	Q, Agent, Model string
+	From, To        int64
+	MinCost         float64
+	MinTokens       int64
+	Sort            string
+}
+
+type modelOption struct {
+	Value string
+	Label string
+}
+
 // openReadOnly opens the SQLite database without allowing writes.
 func openReadOnly(path string) (*sql.DB, error) {
 	abs, err := filepath.Abs(path)
@@ -70,14 +90,38 @@ func openReadOnly(path string) (*sql.DB, error) {
 	return db, nil
 }
 
-func listProjects(db *sql.DB) ([]project, error) {
-	const q = `
-		select coalesce(p.id, ''), coalesce(p.worktree, ''), coalesce(p.name, ''),
-		       coalesce(p.time_active, 0),
-		       (select count(*) from session_v2 s where s.project_id = p.id)
-		from project p
-		order by coalesce(p.time_active, 0) desc`
-	rows, err := db.Query(q)
+const projectCols = `
+		coalesce(p.id, ''), coalesce(p.worktree, ''), coalesce(p.name, ''),
+		coalesce(p.time_active, 0),
+		(select count(*) from session_v2 s where s.project_id = p.id)`
+
+func listProjects(db *sql.DB, f projectFilter) ([]project, error) {
+	var where []string
+	var args []any
+	if q := strings.TrimSpace(f.Q); q != "" {
+		where = append(where, "(coalesce(p.worktree,'') like ? or coalesce(p.name,'') like ?)")
+		like := "%" + q + "%"
+		args = append(args, like, like)
+	}
+	if f.From > 0 {
+		where = append(where, "coalesce(p.time_active,0) >= ?")
+		args = append(args, f.From)
+	}
+	if f.To > 0 {
+		where = append(where, "coalesce(p.time_active,0) <= ?")
+		args = append(args, f.To)
+	}
+	order := "coalesce(p.time_active,0) desc"
+	if f.Sort == "sessions" {
+		order = "session_count desc, coalesce(p.time_active,0) desc"
+	}
+	q := "select " + projectCols + " as session_count from project p"
+	if len(where) > 0 {
+		q += " where " + strings.Join(where, " and ")
+	}
+	q += " order by " + order
+
+	rows, err := db.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -94,36 +138,65 @@ func listProjects(db *sql.DB) ([]project, error) {
 }
 
 func getProject(db *sql.DB, id string) (project, error) {
-	const q = `
-		select coalesce(p.id, ''), coalesce(p.worktree, ''), coalesce(p.name, ''),
-		       coalesce(p.time_active, 0),
-		       (select count(*) from session_v2 s where s.project_id = p.id)
-		from project p where p.id = ?`
+	q := "select " + projectCols + " from project p where p.id = ?"
 	var p project
 	err := db.QueryRow(q, id).Scan(&p.ID, &p.Worktree, &p.Name, &p.TimeActive, &p.Sessions)
 	return p, err
 }
 
-func listSessions(db *sql.DB, projectID string) ([]session, error) {
-	const q = `
-		select id, coalesce(project_id, ''), coalesce(directory, ''), coalesce(title, ''),
-		       coalesce(agent, ''), coalesce(model, ''), coalesce(cost, 0),
-		       coalesce(tokens_input, 0), coalesce(tokens_output, 0),
-		       coalesce(time_created, 0), coalesce(time_updated, 0)
-		from session_v2
-		where project_id = ?
-		order by coalesce(time_updated, 0) desc
-		limit 500`
-	return scanSessions(db, q, projectID)
+const sessionCols = `
+		id, coalesce(project_id, ''), coalesce(directory, ''), coalesce(title, ''),
+		coalesce(agent, ''), coalesce(model, ''), coalesce(cost, 0),
+		coalesce(tokens_input, 0), coalesce(tokens_output, 0),
+		coalesce(time_created, 0), coalesce(time_updated, 0)`
+
+func listSessions(db *sql.DB, projectID string, f sessionFilter) ([]session, error) {
+	where := []string{"project_id = ?"}
+	args := []any{projectID}
+	if q := strings.TrimSpace(f.Q); q != "" {
+		where = append(where, "coalesce(title,'') like ?")
+		args = append(args, "%"+q+"%")
+	}
+	if f.Agent != "" {
+		where = append(where, "agent = ?")
+		args = append(args, f.Agent)
+	}
+	if f.Model != "" {
+		where = append(where, "model = ?")
+		args = append(args, f.Model)
+	}
+	if f.From > 0 {
+		where = append(where, "coalesce(time_updated,0) >= ?")
+		args = append(args, f.From)
+	}
+	if f.To > 0 {
+		where = append(where, "coalesce(time_updated,0) <= ?")
+		args = append(args, f.To)
+	}
+	if f.MinCost > 0 {
+		where = append(where, "coalesce(cost,0) >= ?")
+		args = append(args, f.MinCost)
+	}
+	if f.MinTokens > 0 {
+		where = append(where, "(coalesce(tokens_input,0)+coalesce(tokens_output,0)) >= ?")
+		args = append(args, f.MinTokens)
+	}
+	order := "coalesce(time_updated,0) desc"
+	switch f.Sort {
+	case "created":
+		order = "coalesce(time_created,0) desc"
+	case "cost":
+		order = "coalesce(cost,0) desc"
+	case "tokens":
+		order = "(coalesce(tokens_input,0)+coalesce(tokens_output,0)) desc"
+	}
+	q := "select " + sessionCols + " from session_v2 where " + strings.Join(where, " and ") +
+		" order by " + order + " limit 500"
+	return scanSessions(db, q, args...)
 }
 
 func getSession(db *sql.DB, id string) (session, error) {
-	const q = `
-		select id, coalesce(project_id, ''), coalesce(directory, ''), coalesce(title, ''),
-		       coalesce(agent, ''), coalesce(model, ''), coalesce(cost, 0),
-		       coalesce(tokens_input, 0), coalesce(tokens_output, 0),
-		       coalesce(time_created, 0), coalesce(time_updated, 0)
-		from session_v2 where id = ?`
+	q := "select " + sessionCols + " from session_v2 where id = ?"
 	var s session
 	err := db.QueryRow(q, id).Scan(&s.ID, &s.ProjectID, &s.Directory, &s.Title, &s.Agent,
 		&s.Model, &s.Cost, &s.TokensIn, &s.TokensOut, &s.Created, &s.Updated)
@@ -144,6 +217,48 @@ func scanSessions(db *sql.DB, q string, args ...any) ([]session, error) {
 			return nil, err
 		}
 		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+func distinctAgents(db *sql.DB, projectID string) ([]string, error) {
+	rows, err := db.Query(`select distinct agent from session_v2
+		where project_id = ? and coalesce(agent,'') <> '' order by agent`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+func distinctModels(db *sql.DB, projectID string) ([]modelOption, error) {
+	rows, err := db.Query(`select distinct model from session_v2
+		where project_id = ? and coalesce(model,'') <> '' order by model`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	seen := map[string]bool{}
+	var out []modelOption
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		label := modelLabel(raw)
+		if seen[label] {
+			continue
+		}
+		seen[label] = true
+		out = append(out, modelOption{Value: raw, Label: label})
 	}
 	return out, rows.Err()
 }
