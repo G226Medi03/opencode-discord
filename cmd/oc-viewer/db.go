@@ -270,7 +270,7 @@ func listMessages(db *sql.DB, sessionID string) ([]message, error) {
 		from session_message
 		where session_id = ?
 		order by coalesce(seq, 0) asc
-		limit 2000`
+		limit 20000`
 	rows, err := db.Query(q, sessionID)
 	if err != nil {
 		return nil, err

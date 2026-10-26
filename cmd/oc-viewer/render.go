@@ -90,6 +90,13 @@ type pageData struct {
 	PF       projectForm
 	SF       sessionForm
 	TF       timelineForm
+
+	Tail          int
+	FilteredTotal int
+	NextTail      int
+	PrevTail      int
+	OlderURL      string
+	NewerURL      string
 }
 
 func fmtTime(ms int64) string {
@@ -404,6 +411,17 @@ func distinctTools(msgs []messageView) []string {
 		}
 	}
 	return out
+}
+
+// tailSlice returns the newest tail messages from an ascending list.
+func tailSlice(in []messageView, tail int) []messageView {
+	if tail <= 0 {
+		tail = 1000
+	}
+	if len(in) <= tail {
+		return in
+	}
+	return in[len(in)-tail:]
 }
 
 // colorizeDiff escapes a unified diff and marks added/removed/hunk lines.
@@ -790,7 +808,7 @@ var sessionTmpl = mustTmpl(`
   <button type="submit">적용</button>
   <a class="reset" href="/session/{{.Session.ID}}">초기화</a>
 </form>
-<p class="count">{{len .Messages}}개 메시지</p>
+<p class="count">{{len .Messages}}개 표시 · 필터 결과 {{.FilteredTotal}}개{{if .OlderURL}} · <a href="{{.OlderURL}}">이전 메시지 더 보기</a>{{end}}{{if .NewerURL}} · <a href="{{.NewerURL}}">최신으로</a>{{end}}</p>
 {{range .Messages}}
 <div class="msg {{.Type}}" id="msg-{{.ID}}"
      data-session="{{$.Session.ID}}" data-msg="{{.ID}}" data-title="{{$.Session.Title}}"

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -357,5 +358,22 @@ func TestColorizeDiff(t *testing.T) {
 	}
 	if strings.Contains(got, "<x>") {
 		t.Fatalf("diff was not escaped:\n%s", got)
+	}
+}
+
+func TestTailSlice(t *testing.T) {
+	var in []messageView
+	for i := 0; i < 1500; i++ {
+		in = append(in, messageView{ID: strconv.Itoa(i)})
+	}
+	got := tailSlice(in, 1000)
+	if len(got) != 1000 || got[0].ID != "500" || got[999].ID != "1499" {
+		t.Fatalf("tail: len=%d first=%q last=%q", len(got), got[0].ID, got[len(got)-1].ID)
+	}
+	if all := tailSlice(in, 5000); len(all) != 1500 {
+		t.Fatalf("large tail: %d", len(all))
+	}
+	if def := tailSlice(in, 0); len(def) != 1000 {
+		t.Fatalf("default tail: %d", len(def))
 	}
 }

@@ -175,12 +175,43 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 		From: dateStart(tf.From), To: dateEnd(tf.To),
 	})
 
+	tail := int(parseInt64(q.Get("tail")))
+	if tail <= 0 {
+		tail = 1000
+	}
+	if tail > 20000 {
+		tail = 20000
+	}
+	shown := tailSlice(filtered, tail)
+
 	data := pageData{
 		Title: sess.Title, DBPath: s.dbPath,
 		Project: toProjectView(proj), Session: toSessionView(sess),
-		Messages: filtered, TF: tf, Head: headCommit(proj.Worktree),
+		Messages: shown, TF: tf, Head: headCommit(proj.Worktree),
+		Tail: tail, FilteredTotal: len(filtered),
+	}
+	if len(filtered) > tail {
+		data.NextTail = tail + 1000
+		if data.NextTail > len(filtered) {
+			data.NextTail = len(filtered)
+		}
+		data.OlderURL = pageURL(r, data.NextTail)
+	}
+	if tail > 1000 {
+		data.PrevTail = tail - 1000
+		if data.PrevTail < 1000 {
+			data.PrevTail = 1000
+		}
+		data.NewerURL = pageURL(r, data.PrevTail)
 	}
 	render(w, sessionTmpl, data)
+}
+
+// pageURL keeps the current filters and changes only the tail size.
+func pageURL(r *http.Request, tail int) string {
+	q := r.URL.Query()
+	q.Set("tail", strconv.Itoa(tail))
+	return r.URL.Path + "?" + q.Encode()
 }
 
 func render(w http.ResponseWriter, t *template.Template, data pageData) {
