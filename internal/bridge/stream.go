@@ -178,7 +178,16 @@ func (s *stream) finish() {
 	s.b.logger.Infof("[stream] finish channel=%s pieces=%d maxPieceChars=%d hasMsg=%v hasHead=%v bodyChars=%d", s.channelID, len(pieces), maxPiece, hasMsg, headLines > 0, chunk.Len(body))
 
 	if hasMsg {
-		s.edit(pieces[0])
+		// Send the final answer as a fresh message so its timestamp reflects
+		// completion. Editing would keep the placeholder's original time.
+		ref := s.ref()
+		if err := s.b.app.Delete(ref); err != nil {
+			s.b.logger.Warnf("[stream] 삭제 실패 → 편집으로 대체 channel=%s msg=%s: %v", ref.ChannelID, ref.MessageID, err)
+			s.edit(pieces[0])
+		} else {
+			s.b.logger.Infof("[stream] 최종 답변 재전송 channel=%s deleted=%s", s.channelID, ref.MessageID)
+			s.b.sendChannel(s.channelID, pieces[0])
+		}
 		for _, p := range pieces[1:] {
 			s.b.sendChannel(s.channelID, p)
 		}

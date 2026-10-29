@@ -1,5 +1,7 @@
 github.com/G226Medi03/chat-app-adapter v0.1.1 h1:B6tW36Xdwddm9ijw0Jbp4pOnOZ0Ot+9r7W+XhzO5JPs=
 github.com/G226Medi03/chat-app-adapter v0.1.1/go.mod h1:n9a3fAfuhUxioVr/RX10c6iSUWfrfVBALyPtzxIuS0U=
+github.com/G226Medi03/chat-app-adapter v0.1.2 h1:ZG6a2Tg0DxJKAVeE6jJJ9lWC9pBNrVwjN2Pc66hYHfA=
+github.com/G226Medi03/chat-app-adapter v0.1.2/go.mod h1:n9a3fAfuhUxioVr/RX10c6iSUWfrfVBALyPtzxIuS0U=
 github.com/bwmarrin/discordgo v0.29.0 h1:FmWeXFaKUwrcL3Cx65c20bTRW+vOb6k8AnaP+EgjDno=
 github.com/bwmarrin/discordgo v0.29.0/go.mod h1:NJZpH+1AfhIcyQsPeuBKsUtYrRnjkyu0kIVMCHkZtRY=
 github.com/dustin/go-humanize v1.1.0 h1:dbKTrvD0klcbBV/h4AWJdMuZogJACoMlvWIWZ5b2xWg=
