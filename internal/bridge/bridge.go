@@ -139,6 +139,11 @@ func (b *Bridge) handleMessage(m chat.Message) {
 			})
 			return
 		}
+		// A "!" prefix is command-only: never forward an unknown command to OpenCode.
+		if cmd, ok := unknownBangCommand(text); ok {
+			b.sendChannel(m.ChannelID, "알 수 없는 명령어입니다: `"+cmd+"`\n`!help`로 사용법을 확인하세요.")
+			return
+		}
 	}
 
 	bindingPtr := b.bind.Ensure(ref)
@@ -467,6 +472,24 @@ func (b *Bridge) applyPending(ctx context.Context, key string, st *sessionState)
 		b.pending[key] = cur
 		b.mu.Unlock()
 	}
+}
+
+// unknownBangCommand returns the display name of a "!" text that did not match
+// a registered command. "/" texts are not command-only and return false.
+func unknownBangCommand(text string) (string, bool) {
+	t := strings.TrimSpace(text)
+	if !strings.HasPrefix(t, "!") {
+		return "", false
+	}
+	body := strings.TrimSpace(t[1:])
+	if body == "" {
+		return "!", true
+	}
+	name := body
+	if i := strings.IndexAny(body, " \t\n"); i >= 0 {
+		name = body[:i]
+	}
+	return "!" + strings.ToLower(name), true
 }
 
 // ---- helpers -------------------------------------------------------------
