@@ -39,6 +39,9 @@ type Bridge struct {
 	sessions  map[string]*sessionState
 	autoAllow map[string]bool
 	pending   map[string]pendingConfig
+
+	// turnGate serializes "after all turns" work with AI turns across channels.
+	turnGate sync.RWMutex
 }
 
 // pendingConfig holds mode/model changes requested while a turn was running.
@@ -192,6 +195,9 @@ func (b *Bridge) dispatch(in *chatcmd.Invocation) {
 // ---- turn execution ------------------------------------------------------
 
 func (b *Bridge) runTurn(m chat.Message, ref bindings.ChannelRef, key string, binding store.Binding, text string) {
+	b.turnGate.RLock()
+	defer b.turnGate.RUnlock()
+
 	ctx := context.Background()
 	cwd := binding.Cwd
 	if !projects.IsDir(cwd) {
@@ -720,6 +726,22 @@ func (b *Bridge) enqueue(key string, fn func()) {
 	}
 	b.mu.Unlock()
 	c.push(fn)
+}
+
+// allQueuesIdle reports whether every channel queue is empty and idle.
+func (b *Bridge) allQueuesIdle() bool {
+	b.mu.Lock()
+	chains := make([]*chain, 0, len(b.queues))
+	for _, c := range b.queues {
+		chains = append(chains, c)
+	}
+	b.mu.Unlock()
+	for _, c := range chains {
+		if c.busy() {
+			return false
+		}
+	}
+	return true
 }
 
 func (b *Bridge) queueDepth(key string) int {

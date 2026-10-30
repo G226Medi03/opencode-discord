@@ -42,6 +42,8 @@ func (b *Bridge) buildRegistry() *chatcmd.Registry {
 	r.Add(&chatcmd.Command{Name: "compact", Description: "세션 컨텍스트 압축(/compact 실행)", Usage: "/compact · !compact", Handler: b.cmdCompact})
 	r.Add(&chatcmd.Command{Name: "cmd", Description: "이 채널의 cwd 에서 셸 명령 실행(owner 전용)", Usage: "/cmd <명령> · !cmd <명령>",
 		Options: []chatcmd.Option{strOpt("command", "실행할 cmd 명령", true)}, ArgName: "command", Handler: b.cmdShell})
+	r.Add(&chatcmd.Command{Name: "aftercmd", Description: "모든 OpenCode 세션 작업이 끝난 뒤 셸 명령 실행(owner 전용)", Usage: "/aftercmd <명령> · !aftercmd <명령>",
+		Options: []chatcmd.Option{strOpt("command", "실행할 cmd 명령", true)}, ArgName: "command", Handler: b.cmdAfterCmd})
 	r.Add(&chatcmd.Command{Name: "file", Description: "이 채널의 cwd 에서 파일 첨부 전송(owner 전용)", Usage: "/file <경로> · !file <경로>",
 		Options: []chatcmd.Option{strOpt("path", "전송할 파일 경로(cwd 기준)", true)}, ArgName: "path", Handler: b.cmdFile})
 	return r
@@ -403,28 +405,71 @@ func (b *Bridge) cmdShell(in *chatcmd.Invocation) {
 		in.Reply("cwd 폴더가 없습니다: `" + cwd + "`")
 		return
 	}
+	b.runShellAndReply(ref.ID, cwd, command, "[Cmd]", "cmd", in.Reply)
+}
+
+// cmdAfterCmd runs a shell command after every AI turn in every channel is done.
+func (b *Bridge) cmdAfterCmd(in *chatcmd.Invocation) {
+	ref := b.channelRef(in.ChannelID)
+	command := strings.TrimSpace(in.Arg("command"))
+	if command == "" {
+		in.Reply("사용법: `/aftercmd <명령>` (예: `/aftercmd dir`, `!aftercmd dir`)")
+		return
+	}
+	bindingPtr := b.bind.Ensure(ref)
+	if bindingPtr == nil || bindingPtr.Cwd == "" {
+		in.Reply("이 채널의 cwd 가 결정되지 않았습니다. `/cwd <경로>` 로 지정하세요.")
+		return
+	}
+	cwd := bindingPtr.Cwd
+	if !projects.IsDir(cwd) {
+		in.Reply("cwd 폴더가 없습니다: `" + cwd + "`")
+		return
+	}
+
+	in.Reply("모든 OpenCode 세션의 작업이 끝난 뒤 실행하도록 예약했습니다.")
+	b.logger.Infof("[aftercmd] queued channel=%s cwd=%s cmd=%q", ref.ID, cwd, command)
+	go func() {
+		for !b.allQueuesIdle() {
+			time.Sleep(500 * time.Millisecond)
+		}
+		// Wait for in-flight turns, then block new turns until the shell finishes.
+		b.turnGate.Lock()
+		defer b.turnGate.Unlock()
+		b.logger.Infof("[aftercmd] start channel=%s cwd=%s cmd=%q", ref.ID, cwd, command)
+		b.runShellAndReply(ref.ID, cwd, command, "[AfterCmd]", "aftercmd", func(s string) {
+			b.sendChannel(ref.ID, s)
+		})
+	}()
+}
+
+// runShellAndReply executes a shell command and posts the result in chunks.
+func (b *Bridge) runShellAndReply(channelID, cwd, command, header, tag string, reply func(string)) {
 	timeout := time.Duration(maxInt(5, b.config.Bot.CmdTimeoutSec)) * time.Second
 	ctx, cancel := context.WithTimeout(context.Background(), timeout+10*time.Second)
 	defer cancel()
 
 	out, err := runShell(ctx, cwd, command, timeout)
 	if err != nil {
-		b.logger.Infof("[cmd] %q -> err=%v (cwd=%s)", command, err, cwd)
+		b.logger.Infof("[%s] %q -> err=%v (cwd=%s)", tag, command, err, cwd)
 	} else {
-		b.logger.Infof("[cmd] %q ok (cwd=%s)", command, cwd)
+		b.logger.Infof("[%s] %q ok (cwd=%s)", tag, command, cwd)
 	}
 	body := out
 	if strings.TrimSpace(body) == "" {
 		body = "(출력 없음)"
 	}
-	pieces := assembleAnswer("[Cmd]\n", "", body, "\n[종료]", b.config.Bot.MaxChunk)
-	in.Reply(pieces[0])
+	pieces := assembleAnswer(header+"\n", "", body, "\n[종료]", b.config.Bot.MaxChunk)
+	reply(pieces[0])
 	for _, p := range pieces[1:] {
-		b.sendChannel(ref.ID, p)
+		b.sendChannel(channelID, p)
 	}
 }
 
 func (b *Bridge) runSynthetic(ref bindings.ChannelRef, binding store.Binding, text string) {
+	b.turnGate.RLock()
+	defer b.turnGate.RUnlock()
+
 	ctx := context.Background()
 	if !projects.IsDir(binding.Cwd) {
 		b.sendChannel(ref.ID, "cwd 폴더가 없습니다: `"+binding.Cwd+"`")
