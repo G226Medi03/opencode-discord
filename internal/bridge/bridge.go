@@ -717,15 +717,21 @@ func maxInt(a, b int) int {
 
 // ---- per-key serial queue ------------------------------------------------
 
+type chainItem struct {
+	fn  func()
+	gen int
+}
+
 type chain struct {
 	mu      sync.Mutex
 	running bool
-	items   []func()
+	gen     int
+	items   []chainItem
 }
 
 func (c *chain) push(fn func()) {
 	c.mu.Lock()
-	c.items = append(c.items, fn)
+	c.items = append(c.items, chainItem{fn: fn, gen: c.gen})
 	if c.running {
 		c.mu.Unlock()
 		return
@@ -743,11 +749,24 @@ func (c *chain) run() {
 			c.mu.Unlock()
 			return
 		}
-		fn := c.items[0]
+		item := c.items[0]
 		c.items = c.items[1:]
+		gen := c.gen
 		c.mu.Unlock()
-		fn()
+		// Items queued before a clear() are skipped even if already popped.
+		if item.gen == gen {
+			item.fn()
+		}
 	}
+}
+
+func (c *chain) clear() int {
+	c.mu.Lock()
+	n := len(c.items)
+	c.items = nil
+	c.gen++
+	c.mu.Unlock()
+	return n
 }
 
 func (c *chain) depth() int {
@@ -771,6 +790,40 @@ func (b *Bridge) enqueue(key string, fn func()) {
 	}
 	b.mu.Unlock()
 	c.push(fn)
+}
+
+// clearAllQueues drops every queued message and cancels every running turn.
+func (b *Bridge) clearAllQueues() (queued, cancelled int) {
+	b.mu.Lock()
+	chains := make([]*chain, 0, len(b.queues))
+	for _, c := range b.queues {
+		chains = append(chains, c)
+	}
+	sessions := make([]*sessionState, 0, len(b.sessions))
+	for _, st := range b.sessions {
+		if st != nil {
+			sessions = append(sessions, st)
+		}
+	}
+	b.mu.Unlock()
+
+	for _, c := range chains {
+		queued += c.clear()
+	}
+
+	seen := map[string]bool{}
+	for _, st := range sessions {
+		if st.agent == nil || st.sessionID == "" || !st.agent.Running() {
+			continue
+		}
+		if seen[st.sessionID] {
+			continue
+		}
+		seen[st.sessionID] = true
+		st.agent.Cancel(st.sessionID)
+		cancelled++
+	}
+	return queued, cancelled
 }
 
 // allQueuesIdle reports whether every channel queue is empty and idle.

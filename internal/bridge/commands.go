@@ -74,14 +74,13 @@ func (b *Bridge) cmdNew(in *chatcmd.Invocation) {
 }
 
 func (b *Bridge) cmdStop(in *chatcmd.Invocation) {
-	ref := b.channelRef(in.ChannelID)
-	st := b.sessionFor(bindings.Key(ref))
-	if st == nil || st.agent == nil || st.sessionID == "" || !st.agent.Running() {
-		in.Reply("진행 중인 세션이 없습니다.")
+	queued, cancelled := b.clearAllQueues()
+	if queued == 0 && cancelled == 0 {
+		in.Reply("대기 중인 메시지나 진행 중인 턴이 없습니다.")
 		return
 	}
-	st.agent.Cancel(st.sessionID)
-	in.Reply("취소(session/cancel) 요청을 보냈습니다.")
+	in.Reply(fmt.Sprintf("모든 대기 메시지 %d개를 삭제하고, 진행 중인 턴 %d개를 취소했습니다.", queued, cancelled))
+	b.logger.Infof("[stop] cleared queues=%d cancelled=%d", queued, cancelled)
 }
 
 func (b *Bridge) cmdCwd(in *chatcmd.Invocation) {

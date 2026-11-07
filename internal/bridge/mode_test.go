@@ -11,14 +11,19 @@ import (
 
 type modeAgent struct {
 	agent.Agent
-	mode string
-	sets []string
+	mode    string
+	sets    []string
+	cancels []string
 }
 
 func (a *modeAgent) SetMode(ctx context.Context, sessionID, mode string) error {
 	a.mode = mode
 	a.sets = append(a.sets, mode)
 	return nil
+}
+
+func (a *modeAgent) Cancel(sessionID string) {
+	a.cancels = append(a.cancels, sessionID)
 }
 
 func (a *modeAgent) Running() bool { return true }
