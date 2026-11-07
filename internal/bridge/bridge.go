@@ -154,7 +154,10 @@ func (b *Bridge) handleMessage(m chat.Message) {
 		b.sendChannel(m.ChannelID, b.unresolvedNotice(ref))
 		return
 	}
-	b.enqueue(key, func() { b.runTurn(m, ref, key, *bindingPtr, text) })
+	// Capture the mode at receipt time so each queued message runs with the
+	// mode that was in effect when it arrived, not when its turn starts.
+	mode := b.modeAtReceipt(key, *bindingPtr)
+	b.enqueue(key, func() { b.runTurn(m, ref, key, *bindingPtr, text, mode) })
 }
 
 func (b *Bridge) handleCommand(in chat.Input) {
@@ -194,7 +197,7 @@ func (b *Bridge) dispatch(in *chatcmd.Invocation) {
 
 // ---- turn execution ------------------------------------------------------
 
-func (b *Bridge) runTurn(m chat.Message, ref bindings.ChannelRef, key string, binding store.Binding, text string) {
+func (b *Bridge) runTurn(m chat.Message, ref bindings.ChannelRef, key string, binding store.Binding, text, mode string) {
 	b.turnGate.RLock()
 	defer b.turnGate.RUnlock()
 
@@ -234,6 +237,14 @@ func (b *Bridge) runTurn(m chat.Message, ref bindings.ChannelRef, key string, bi
 	b.applyPending(ctx, key, sess)
 	defer b.applyPending(ctx, key, sess)
 
+	// The mode captured when this message arrived wins over any newer session
+	// mode, so pipelined messages keep their own mode.
+	b.applyTurnMode(ctx, key, sess, mode)
+	turnMode := mode
+	if strings.TrimSpace(turnMode) == "" {
+		turnMode = sess.mode
+	}
+
 	// Optional: answer inside a new thread that shares the parent session.
 	if b.config.Bot.Threads && !ref.IsDM && !ref.IsThread {
 		if th, terr := b.app.StartThread(ref.ID, m.ID, threadName(m)); terr == nil {
@@ -257,7 +268,7 @@ func (b *Bridge) runTurn(m chat.Message, ref bindings.ChannelRef, key string, bi
 	b.setBusy(key, true)
 	defer b.setBusy(key, false)
 
-	st := newStream(b, ref.ID, sess.mode)
+	st := newStream(b, ref.ID, turnMode)
 	if ref.IsThread {
 		if ph, err := b.app.Send(ref.ID, thinking); err == nil {
 			st.attach(ph)
@@ -275,7 +286,7 @@ func (b *Bridge) runTurn(m chat.Message, ref bindings.ChannelRef, key string, bi
 		return b.handlePermission(ref, sess.sessionID, req)
 	}
 
-	stop, err := ag.Prompt(ctx, sess.sessionID, b.buildPrompt(m, ref, promptText, sess.mode, atts), sink, perm)
+	stop, err := ag.Prompt(ctx, sess.sessionID, b.buildPrompt(m, ref, promptText, turnMode, atts), sink, perm)
 	b.agent_pool.Release(agKey)
 	if err != nil && !ag.Running() && st.length() == 0 && !sink.toolSeen {
 		b.logger.Warnf("[turn] 프로세스 종료로 실패 — 세션 %s 로 재기동 후 재시도 key=%s: %v", sess.sessionID, key, err)
@@ -289,7 +300,8 @@ func (b *Bridge) runTurn(m chat.Message, ref bindings.ChannelRef, key string, bi
 			}
 		}
 		if err == nil {
-			stop, err = ag.Prompt(ctx, sess.sessionID, b.buildPrompt(m, ref, promptText, sess.mode, atts), sink, perm)
+			b.applyTurnMode(ctx, key, sess, mode)
+			stop, err = ag.Prompt(ctx, sess.sessionID, b.buildPrompt(m, ref, promptText, turnMode, atts), sink, perm)
 			b.agent_pool.Release(agKey)
 		}
 	}
@@ -541,6 +553,39 @@ func (b *Bridge) setSessionMode(key, mode string) {
 		st.mode = mode
 	}
 	b.mu.Unlock()
+}
+
+// modeAtReceipt returns the mode in effect when a message arrives.
+func (b *Bridge) modeAtReceipt(key string, binding store.Binding) string {
+	if m := strings.TrimSpace(binding.Agent); m != "" {
+		return m
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if st := b.sessions[key]; st != nil {
+		return strings.TrimSpace(st.mode)
+	}
+	return ""
+}
+
+// applyTurnMode applies the mode captured for this turn to the live session.
+func (b *Bridge) applyTurnMode(ctx context.Context, key string, st *sessionState, mode string) {
+	mode = strings.TrimSpace(mode)
+	if mode == "" || st == nil || st.agent == nil || st.sessionID == "" {
+		return
+	}
+	b.mu.Lock()
+	current := st.mode
+	b.mu.Unlock()
+	if current == mode {
+		return
+	}
+	if err := st.agent.SetMode(ctx, st.sessionID, mode); err != nil {
+		b.logger.Warnf("[turn] 모드 적용 실패 mode=%s sessionId=%s: %v", mode, st.sessionID, err)
+		return
+	}
+	b.setSessionMode(key, mode)
+	b.logger.Infof("[turn] 모드 적용 mode=%s sessionId=%s key=%s", mode, st.sessionID, key)
 }
 
 func (b *Bridge) setBusy(key string, busy bool) {
