@@ -74,13 +74,22 @@ func (b *Bridge) cmdNew(in *chatcmd.Invocation) {
 }
 
 func (b *Bridge) cmdStop(in *chatcmd.Invocation) {
-	queued, cancelled := b.clearAllQueues()
-	if queued == 0 && cancelled == 0 {
-		in.Reply("대기 중인 메시지나 진행 중인 턴이 없습니다.")
-		return
+	ref := b.channelRef(in.ChannelID)
+	key := bindings.Key(ref)
+	queued := b.clearQueue(key)
+	cancelled := b.cancelSession(key)
+
+	switch {
+	case queued == 0 && !cancelled:
+		in.Reply("이 채널에 대기 중인 메시지나 진행 중인 턴이 없습니다.")
+	case cancelled && queued > 0:
+		in.Reply(fmt.Sprintf("이 채널의 대기 메시지 %d개를 삭제하고, 진행 중인 턴을 취소했습니다.", queued))
+	case cancelled:
+		in.Reply("진행 중인 턴을 취소했습니다.")
+	default:
+		in.Reply(fmt.Sprintf("이 채널의 대기 메시지 %d개를 삭제했습니다.", queued))
 	}
-	in.Reply(fmt.Sprintf("모든 대기 메시지 %d개를 삭제하고, 진행 중인 턴 %d개를 취소했습니다.", queued, cancelled))
-	b.logger.Infof("[stop] cleared queues=%d cancelled=%d", queued, cancelled)
+	b.logger.Infof("[stop] key=%s cleared=%d cancelled=%v", key, queued, cancelled)
 }
 
 func (b *Bridge) cmdCwd(in *chatcmd.Invocation) {

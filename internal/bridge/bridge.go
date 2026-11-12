@@ -792,38 +792,25 @@ func (b *Bridge) enqueue(key string, fn func()) {
 	c.push(fn)
 }
 
-// clearAllQueues drops every queued message and cancels every running turn.
-func (b *Bridge) clearAllQueues() (queued, cancelled int) {
+// clearQueue drops every queued message for one channel key.
+func (b *Bridge) clearQueue(key string) int {
 	b.mu.Lock()
-	chains := make([]*chain, 0, len(b.queues))
-	for _, c := range b.queues {
-		chains = append(chains, c)
-	}
-	sessions := make([]*sessionState, 0, len(b.sessions))
-	for _, st := range b.sessions {
-		if st != nil {
-			sessions = append(sessions, st)
-		}
-	}
+	c := b.queues[key]
 	b.mu.Unlock()
-
-	for _, c := range chains {
-		queued += c.clear()
+	if c == nil {
+		return 0
 	}
+	return c.clear()
+}
 
-	seen := map[string]bool{}
-	for _, st := range sessions {
-		if st.agent == nil || st.sessionID == "" || !st.agent.Running() {
-			continue
-		}
-		if seen[st.sessionID] {
-			continue
-		}
-		seen[st.sessionID] = true
-		st.agent.Cancel(st.sessionID)
-		cancelled++
+// cancelSession cancels the running turn for one channel key.
+func (b *Bridge) cancelSession(key string) bool {
+	st := b.sessionFor(key)
+	if st == nil || st.agent == nil || st.sessionID == "" || !st.agent.Running() {
+		return false
 	}
-	return queued, cancelled
+	st.agent.Cancel(st.sessionID)
+	return true
 }
 
 // allQueuesIdle reports whether every channel queue is empty and idle.
