@@ -14,6 +14,7 @@ import (
 	"oc-discord/internal/agent/pool"
 	"oc-discord/internal/bridge"
 	"oc-discord/internal/config"
+	"oc-discord/internal/discordaccess"
 	"oc-discord/internal/logx"
 )
 
@@ -50,6 +51,19 @@ func main() {
 	}
 	log := logx.New(lvl, cfg.LogDir)
 	defer log.Close()
+
+	// Expand the static policy with channels where the bot has explicit
+	// ViewChannel access. Public channels that are only visible through
+	// @everyone are deliberately not included.
+	if cfg.Token != "" && cfg.GuildID != "" {
+		invited, err := discordaccess.InvitedChannels(cfg.Token, cfg.GuildID)
+		if err != nil {
+			log.Warnf("[boot] 초대 채널 자동 감지 실패 — channel-policy 사용: %v", err)
+		} else {
+			cfg.AllowedChannelIDs = mergeIDs(cfg.AllowedChannelIDs, invited)
+			log.Infof("[boot] 초대 채널 자동 감지: %d개", len(invited))
+		}
+	}
 
 	log.Infof("[boot] oc-discord %s · root=%s · .env %d개 키 · state=%s", version, cfg.Root, len(cfg.EnvKeys), cfg.StatePath)
 	log.Infof("[boot] 허용채널=%v · cwd루트=%s · 길드=%s", cfg.AllowedChannelIDs, cfg.CwdRoot, cfg.GuildID)
@@ -135,4 +149,19 @@ func orAuto(s string) string {
 		return "(auto-resolve)"
 	}
 	return s
+}
+
+func mergeIDs(existing, extra []string) []string {
+	seen := make(map[string]bool, len(existing)+len(extra))
+	out := make([]string, 0, len(existing)+len(extra))
+	for _, group := range [][]string{existing, extra} {
+		for _, id := range group {
+			if id == "" || seen[id] {
+				continue
+			}
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
 }
