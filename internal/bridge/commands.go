@@ -496,6 +496,7 @@ func (b *Bridge) runSynthetic(ref bindings.ChannelRef, binding store.Binding, te
 		return
 	}
 	st := newStream(b, ref.ID, "")
+	st.cwd = binding.Cwd
 	if ph, err := b.app.Send(ref.ID, thinking); err == nil {
 		st.attach(ph)
 	}
@@ -526,6 +527,7 @@ func (b *Bridge) helpText() string {
 	}
 	lines = append(lines,
 		"",
+		"• 파일 전송: `/file <경로>` 또는 에이전트 답변에 `[첨부: 경로]` 마커",
 		fmt.Sprintf("cwd 자동결정 루트: `%s`", b.config.CwdRoot),
 		"우선순위: `channel-cwd.json override > 폴더명 일치 > 구분자무시 일치 > 유일한 접미사`",
 		"",

@@ -1,6 +1,10 @@
 package bridge
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -8,6 +12,12 @@ import (
 	"github.com/G226Medi03/chat-app-adapter/chat"
 	"github.com/G226Medi03/chat-app-adapter/chunk"
 )
+
+// attachmentMarkerRE matches an agent-requested outgoing file, for example
+// "[첨부: dist/app.zip]" or "[attach: docs/report.pdf]".
+var attachmentMarkerRE = regexp.MustCompile(`(?i)\[(?:첨부|attach|file)\s*:\s*([^\]\r\n]+)\]`)
+
+const maxAutoAttachments = 5
 
 // answerFooter is appended to the end of every conversational answer.
 const answerFooter = "\n[답변종료]"
@@ -21,6 +31,7 @@ type stream struct {
 	channelID string
 	messageID string
 	tag       string
+	cwd       string
 
 	mu          sync.Mutex
 	text        strings.Builder
@@ -165,7 +176,10 @@ func (s *stream) finish() {
 	s.closed = true
 	header := s.headerLocked()
 	headLines := len(s.toolLines)
-	body := s.text.String()
+	body, attachments := extractAttachmentMarkers(s.text.String())
+	if strings.TrimSpace(body) == "" && len(attachments) > 0 {
+		body = "첨부 파일을 전송합니다."
+	}
 	hasMsg := s.messageID != ""
 	s.mu.Unlock()
 
@@ -191,10 +205,79 @@ func (s *stream) finish() {
 		for _, p := range pieces[1:] {
 			s.b.sendChannel(s.channelID, p)
 		}
+		s.sendAttachments(attachments)
 		return
 	}
 	for _, p := range pieces {
 		s.b.sendChannel(s.channelID, p)
+	}
+	s.sendAttachments(attachments)
+}
+
+// extractAttachmentMarkers removes [첨부: path] markers from an answer and
+// returns their paths. Duplicate markers are collapsed.
+func extractAttachmentMarkers(body string) (string, []string) {
+	matches := attachmentMarkerRE.FindAllStringSubmatch(body, -1)
+	if len(matches) == 0 {
+		return body, nil
+	}
+	seen := make(map[string]bool, len(matches))
+	paths := make([]string, 0, len(matches))
+	for _, m := range matches {
+		p := strings.TrimSpace(m[1])
+		p = strings.Trim(p, "\"'`")
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		paths = append(paths, p)
+	}
+	cleaned := attachmentMarkerRE.ReplaceAllString(body, "")
+	return strings.TrimSpace(cleaned), paths
+}
+
+// sendAttachments sends files requested by the agent. Paths are restricted to
+// the channel cwd, mirroring the /file command.
+func (s *stream) sendAttachments(paths []string) {
+	if len(paths) == 0 {
+		return
+	}
+	if len(paths) > maxAutoAttachments {
+		s.b.logger.Warnf("[file] 자동 첨부 개수 초과 channel=%s requested=%d limit=%d", s.channelID, len(paths), maxAutoAttachments)
+		paths = paths[:maxAutoAttachments]
+	}
+	if strings.TrimSpace(s.cwd) == "" {
+		s.b.sendChannel(s.channelID, "첨부 전송 실패: cwd 가 결정되지 않았습니다.")
+		return
+	}
+	for _, raw := range paths {
+		target, err := resolveInsideCwd(s.cwd, raw)
+		if err != nil {
+			s.b.logger.Warnf("[file] 자동 첨부 거부 path=%s: %v", raw, err)
+			s.b.sendChannel(s.channelID, "첨부 전송 실패: "+err.Error())
+			continue
+		}
+		fi, err := os.Stat(target)
+		if err != nil {
+			s.b.logger.Warnf("[file] 자동 첨부 파일 없음 path=%s: %v", target, err)
+			s.b.sendChannel(s.channelID, "첨부 파일이 없습니다: `"+raw+"`")
+			continue
+		}
+		if fi.IsDir() {
+			s.b.sendChannel(s.channelID, "폴더는 첨부할 수 없습니다: `"+raw+"`")
+			continue
+		}
+		name := filepath.Base(target)
+		if _, err := s.b.app.SendFile(s.channelID, "📎 "+name, target); err != nil {
+			if errors.Is(err, chat.ErrFileTooLarge) {
+				s.b.sendChannel(s.channelID, "Discord 파일 용량 제한을 초과해 전송할 수 없습니다 (파일: "+name+").")
+				continue
+			}
+			s.b.logger.Warnf("[file] 자동 첨부 전송 실패 path=%s size=%d: %v", target, fi.Size(), err)
+			s.b.sendChannel(s.channelID, "첨부 전송 실패: "+err.Error())
+			continue
+		}
+		s.b.logger.Infof("[file] 자동 첨부 전송 path=%s size=%d", target, fi.Size())
 	}
 }
 

@@ -2,6 +2,8 @@ package bridge
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -16,6 +18,7 @@ type fakeApp struct {
 	chat.App
 	edits     []string
 	sends     []string
+	files     []string
 	deletes   []chat.MessageRef
 	deleteErr error
 }
@@ -32,6 +35,11 @@ func (f *fakeApp) Delete(ref chat.MessageRef) error {
 
 func (f *fakeApp) Send(channelID, content string) (chat.MessageRef, error) {
 	f.sends = append(f.sends, content)
+	return chat.MessageRef{ChannelID: channelID}, nil
+}
+
+func (f *fakeApp) SendFile(channelID, content, path string) (chat.MessageRef, error) {
+	f.files = append(f.files, path)
 	return chat.MessageRef{ChannelID: channelID}, nil
 }
 
@@ -69,6 +77,28 @@ func TestFinishDropsToolLines(t *testing.T) {
 	}
 	if !strings.HasPrefix(got, "[Build]\n") || !strings.Contains(got, "최종 답변입니다.") {
 		t.Fatalf("unexpected final answer:\n%s", got)
+	}
+}
+
+func TestFinishSendsAttachmentMarker(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "result.txt"), []byte("ok"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	app := &fakeApp{}
+	s := newTestStream(app)
+	s.cwd = dir
+	s.pushText("완료했습니다.\n[첨부: result.txt]")
+	s.finish()
+
+	want := filepath.Join(dir, "result.txt")
+	if len(app.files) != 1 || app.files[0] != want {
+		t.Fatalf("files = %#v, want %q", app.files, want)
+	}
+	for _, sent := range app.sends {
+		if strings.Contains(sent, "[첨부:") {
+			t.Fatalf("marker leaked into answer: %q", sent)
+		}
 	}
 }
 

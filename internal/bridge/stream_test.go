@@ -56,3 +56,27 @@ func TestAssembleAnswerEmpty(t *testing.T) {
 		t.Fatalf("got %#v", pieces)
 	}
 }
+
+func TestExtractAttachmentMarkers(t *testing.T) {
+	body := "완료했습니다.\n[첨부: dist/app.zip]\n[attach: \"docs/보고서.pdf\"]\n[첨부: dist/app.zip]\n"
+	cleaned, paths := extractAttachmentMarkers(body)
+	if cleaned != "완료했습니다." {
+		t.Fatalf("cleaned = %q", cleaned)
+	}
+	want := []string{"dist/app.zip", "docs/보고서.pdf"}
+	if len(paths) != len(want) {
+		t.Fatalf("paths = %#v", paths)
+	}
+	for i := range want {
+		if paths[i] != want[i] {
+			t.Fatalf("paths = %#v, want %#v", paths, want)
+		}
+	}
+}
+
+func TestExtractAttachmentMarkersNone(t *testing.T) {
+	cleaned, paths := extractAttachmentMarkers("일반 답변입니다.")
+	if cleaned != "일반 답변입니다." || len(paths) != 0 {
+		t.Fatalf("cleaned=%q paths=%#v", cleaned, paths)
+	}
+}

@@ -269,6 +269,7 @@ func (b *Bridge) runTurn(m chat.Message, ref bindings.ChannelRef, key string, bi
 	defer b.setBusy(key, false)
 
 	st := newStream(b, ref.ID, turnMode)
+	st.cwd = cwd
 	if ref.IsThread {
 		if ph, err := b.app.Send(ref.ID, thinking); err == nil {
 			st.attach(ph)
@@ -672,6 +673,10 @@ func (b *Bridge) buildPrompt(m chat.Message, ref bindings.ChannelRef, text, mode
 		lines = append(lines, "", block)
 	}
 	lines = append(lines,
+		"",
+		"<attachment_protocol>",
+		"파일을 사용자에게 보내려면 답변에 [첨부: cwd 기준 상대경로] 마커를 넣으세요. 예: [첨부: dist/result.zip]",
+		"</attachment_protocol>",
 		"",
 		`<user_input mode="`+mode+`">`,
 		text,
