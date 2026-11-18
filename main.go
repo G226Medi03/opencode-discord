@@ -133,6 +133,7 @@ func printConfig(cfg *config.Config) {
 	fmt.Printf("allowed categories: %v\n", cfg.AllowedCategoryIDs)
 	fmt.Printf("cwd root          : %s\n", cfg.CwdRoot)
 	fmt.Printf("cwd overrides     : %v\n", cfg.CwdOverrides)
+	fmt.Printf("attachment roots  : %v\n", cfg.AttachmentRoots)
 	fmt.Printf("opencode bin      : %s\n", orAuto(cfg.OpenCodeBin))
 	fmt.Printf("state path        : %s\n", cfg.StatePath)
 	fmt.Printf("log dir           : %s\n", cfg.LogDir)

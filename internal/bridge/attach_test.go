@@ -65,3 +65,22 @@ func TestResolveInsideCwd(t *testing.T) {
 		t.Fatal("expected empty path to be rejected")
 	}
 }
+
+func TestResolveAttachmentExtraRoot(t *testing.T) {
+	cwd := t.TempDir()
+	root := t.TempDir()
+	target := filepath.Join(root, "plan.zip")
+	if err := os.WriteFile(target, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := resolveAttachmentPath(cwd, []string{root}, target)
+	if err != nil {
+		t.Fatalf("extra root path rejected: %v", err)
+	}
+	if got != target {
+		t.Fatalf("got %q, want %q", got, target)
+	}
+	if _, err := resolveAttachmentPath(cwd, nil, target); err == nil {
+		t.Fatal("expected path outside cwd to be rejected without extra roots")
+	}
+}

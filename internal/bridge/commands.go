@@ -332,7 +332,7 @@ func (b *Bridge) cmdFile(in *chatcmd.Invocation) {
 		return
 	}
 	raw := strings.TrimSpace(in.Arg("path"))
-	target, err := resolveInsideCwd(bindingPtr.Cwd, raw)
+	target, err := resolveAttachmentPath(bindingPtr.Cwd, b.config.AttachmentRoots, raw)
 	if err != nil {
 		in.Reply(err.Error())
 		return
@@ -359,8 +359,16 @@ func (b *Bridge) cmdFile(in *chatcmd.Invocation) {
 	b.logger.Infof("[file] 전송 path=%s size=%d", target, fi.Size())
 }
 
-// resolveInsideCwd resolves a path and rejects anything outside cwd.
+// resolveInsideCwd resolves a path and rejects anything outside cwd. It is kept
+// for callers/tests that do not need extra attachment roots.
 func resolveInsideCwd(cwd, raw string) (string, error) {
+	return resolveAttachmentPath(cwd, nil, raw)
+}
+
+// resolveAttachmentPath resolves a path and allows it when it is inside cwd or
+// one of the configured attachment roots. Symlinks are resolved so a link
+// inside an allowed root cannot escape it.
+func resolveAttachmentPath(cwd string, roots []string, raw string) (string, error) {
 	if raw == "" {
 		return "", fmt.Errorf("사용법: `/file <경로>` 또는 `!file <경로>`")
 	}
@@ -372,20 +380,24 @@ func resolveInsideCwd(cwd, raw string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	base, err := filepath.Abs(cwd)
-	if err != nil {
-		return "", err
-	}
-	if !inside(base, abs) {
-		return "", fmt.Errorf("cwd 밖 경로는 보낼 수 없습니다: `%s`", raw)
-	}
-	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
-		if baseReal, err := filepath.EvalSymlinks(base); err == nil && !inside(baseReal, resolved) {
-			return "", fmt.Errorf("cwd 밖 경로는 보낼 수 없습니다: `%s`", raw)
+
+	allowed := make([]string, 0, len(roots)+1)
+	allowed = append(allowed, cwd)
+	allowed = append(allowed, roots...)
+	for _, root := range allowed {
+		base, err := filepath.Abs(root)
+		if err != nil || !inside(base, abs) {
+			continue
 		}
-		abs = resolved
+		if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+			if baseReal, err := filepath.EvalSymlinks(base); err == nil && !inside(baseReal, resolved) {
+				continue
+			}
+			abs = resolved
+		}
+		return abs, nil
 	}
-	return abs, nil
+	return "", fmt.Errorf("cwd 또는 허용된 첨부 폴더 밖 경로는 보낼 수 없습니다: `%s`", raw)
 }
 
 func inside(base, target string) bool {
@@ -527,7 +539,7 @@ func (b *Bridge) helpText() string {
 	}
 	lines = append(lines,
 		"",
-		"• 파일 전송: `/file <경로>` 또는 에이전트 답변에 `[첨부: 경로]` 마커",
+		"• 파일 전송: `/file <경로>` 또는 에이전트 답변에 `[첨부: 경로]` 마커 (cwd + "+strings.Join(b.config.AttachmentRoots, ", ")+")",
 		fmt.Sprintf("cwd 자동결정 루트: `%s`", b.config.CwdRoot),
 		"우선순위: `channel-cwd.json override > 폴더명 일치 > 구분자무시 일치 > 유일한 접미사`",
 		"",

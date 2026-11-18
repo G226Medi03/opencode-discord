@@ -675,7 +675,7 @@ func (b *Bridge) buildPrompt(m chat.Message, ref bindings.ChannelRef, text, mode
 	lines = append(lines,
 		"",
 		"<attachment_protocol>",
-		"파일을 사용자에게 보내려면 답변에 [첨부: cwd 기준 상대경로] 마커를 넣으세요. 예: [첨부: dist/result.zip]",
+		"파일을 사용자에게 보내려면 답변에 [첨부: 경로] 마커를 넣으세요. cwd 기준 상대경로 또는 허용된 첨부 폴더 경로를 사용할 수 있습니다. 예: [첨부: dist/result.zip]",
 		"</attachment_protocol>",
 		"",
 		`<user_input mode="`+mode+`">`,

@@ -49,6 +49,10 @@ type Config struct {
 	CwdRoot      string
 	CwdOverrides map[string]string
 
+	// AttachmentRoots are extra directories (besides the channel cwd) from
+	// which the bot may send files.
+	AttachmentRoots []string
+
 	OpenCodeBin string
 
 	Bot BotConfig
@@ -234,6 +238,13 @@ func Load(explicitRoot string) *Config {
 
 	cwdRoot := firstNonEmpty(os.Getenv("OCD_CWD_ROOT"), `D:\Coding`)
 
+	attachmentRoots := defaultAttachmentRoots()
+	if fileCfg.AttachmentRoots != nil {
+		attachmentRoots = append(attachmentRoots, *fileCfg.AttachmentRoots...)
+	}
+	attachmentRoots = append(attachmentRoots, splitPathList(os.Getenv("OCD_ATTACHMENT_ROOTS"))...)
+	attachmentRoots = cleanPaths(attachmentRoots)
+
 	respondWithoutMention := true
 	if policy.RespondWithoutMention != nil {
 		respondWithoutMention = *policy.RespondWithoutMention
@@ -256,6 +267,7 @@ func Load(explicitRoot string) *Config {
 		AllowedCategoryIDs:    allowedCategories,
 		CwdRoot:               cwdRoot,
 		CwdOverrides:          overrides,
+		AttachmentRoots:       attachmentRoots,
 		OpenCodeBin:           os.Getenv("OPENCODE_BIN"),
 		Bot:                   botRaw,
 		LogDir:                filepath.Join(root, "logs"),
@@ -284,6 +296,7 @@ type botFile struct {
 	RequireMention       *bool     `json:"requireMention"`
 	CmdTimeoutSec        *int      `json:"cmdTimeoutSec"`
 	Model                *string   `json:"model"`
+	AttachmentRoots      *[]string `json:"attachmentRoots"`
 }
 
 func (f botFile) merge(b *BotConfig) {
@@ -398,6 +411,40 @@ func splitCSV(s string) []string {
 		if t := strings.TrimSpace(p); t != "" {
 			out = append(out, t)
 		}
+	}
+	return out
+}
+
+func defaultAttachmentRoots() []string {
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return nil
+	}
+	return []string{filepath.Join(home, ".opencode", "plan")}
+}
+
+func splitPathList(s string) []string {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	return filepath.SplitList(s)
+}
+
+func cleanPaths(in []string) []string {
+	seen := make(map[string]bool, len(in))
+	out := make([]string, 0, len(in))
+	for _, p := range in {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		p = filepath.Clean(p)
+		key := strings.ToLower(p)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, p)
 	}
 	return out
 }

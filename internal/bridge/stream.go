@@ -237,7 +237,7 @@ func extractAttachmentMarkers(body string) (string, []string) {
 }
 
 // sendAttachments sends files requested by the agent. Paths are restricted to
-// the channel cwd, mirroring the /file command.
+// the channel cwd or configured attachment roots, mirroring the /file command.
 func (s *stream) sendAttachments(paths []string) {
 	if len(paths) == 0 {
 		return
@@ -251,7 +251,7 @@ func (s *stream) sendAttachments(paths []string) {
 		return
 	}
 	for _, raw := range paths {
-		target, err := resolveInsideCwd(s.cwd, raw)
+		target, err := resolveAttachmentPath(s.cwd, s.b.config.AttachmentRoots, raw)
 		if err != nil {
 			s.b.logger.Warnf("[file] 자동 첨부 거부 path=%s: %v", raw, err)
 			s.b.sendChannel(s.channelID, "첨부 전송 실패: "+err.Error())
